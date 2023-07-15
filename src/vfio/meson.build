@@ -11,4 +11,6 @@ iommu_test = executable('iommu_test', [trace_sources, support_sources, 'iommu_te
   include_directories: [ccan_inc, core_inc, vfn_inc],
 )
 
+#executable('bind', 'bind_test.c', include_directories: ['/usr/include/linux'])
+executable('bind', 'bind_test.c')
 test('iommu_test', iommu_test)
