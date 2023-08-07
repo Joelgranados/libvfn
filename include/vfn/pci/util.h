@@ -63,6 +63,19 @@ int pci_driver_new_id(const char *driver, uint16_t vid, uint16_t did);
 int pci_driver_remove_id(const char *driver, uint16_t vid, uint16_t did);
 
 /**
+ * pci_device_get_vfio_id - Get the unique vfio id for the device
+ * @bdf: pci device identifier ("bus:device:function")
+ * @id : The vfio device id
+ *
+ * The device id is the number (X) that comes after vfio in
+ * "/sys/bus/pci/devices/bus:device:function.0/vfio-dev/vfioX"
+ *
+ * Return: On success, returns ``0``. On error, returns ``-1`` and sets
+ * ``errno``.
+ */
+int pci_device_get_vfio_id(const char *bdf, unsigned long *id);
+
+/**
  * pci_device_info_get_ull - get sysfs property
  * @bdf: pci device identifier ("bus:device:function")
  * @prop: sysfs property

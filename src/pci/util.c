@@ -32,6 +32,9 @@
 #include <vfn/support/mem.h>
 #include <vfn/pci/util.h>
 
+#include <dirent.h>
+#include <limits.h>
+
 int pci_unbind(const char *bdf)
 {
 	char *path = NULL;
@@ -120,6 +123,63 @@ int pci_driver_remove_id(const char *driver, uint16_t vid, uint16_t did)
 	free(path);
 
 	return ret < 0 ? -1 : 0;
+}
+
+int pci_device_get_vfio_id(const char *bdf, unsigned long *id)
+{
+	int err;
+	char *path = NULL, *dir_nptr, *dir_endptr = NULL;
+	DIR *dp;
+	struct dirent *dentry;
+
+	if (asprintf(&path, "/sys/bus/pci/devices/%s/vfio-dev", bdf) < 0) {
+		log_debug("asprintf failed\n");
+		return -1;
+	}
+
+	dp = opendir(path);
+	if (!dp) {
+		err = errno;
+		log_debug("opendir failed (errno %d)\n", err);
+		goto out;
+	}
+
+	do {
+		dentry = readdir(dp);
+		if (!dentry) {
+			err = errno;
+			log_debug("readdir failed (errno %d)\n", err);
+			goto close_dir;
+		}
+
+		if (strncmp("vfio", dentry->d_name, 4) == 0)
+			break;
+	} while (dentry != NULL);
+
+	if (dentry == NULL) {
+		log_debug("Directory vfioX was not found in %s\n", path);
+		err = -1;
+		goto close_dir;
+	}
+
+	dir_nptr = dentry->d_name + 4;
+	*id = strtoul(dir_nptr, &dir_endptr, 10);
+	if (*id == ULONG_MAX || dir_nptr == dir_endptr) {
+		err = -1;
+		log_debug("Could not extrace vfio id from directory\n");
+		goto close_dir;
+	}
+
+	err = 0;
+
+close_dir:
+	if (closedir(dp)) {
+		err = errno;
+		log_debug("closedir filed (errno %d)\n", err);
+	}
+out:
+	free(path);
+	return err;
 }
 
 int pci_device_info_get_ull(const char *bdf, const char *prop, unsigned long long *v)

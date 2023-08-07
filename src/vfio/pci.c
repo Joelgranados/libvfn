@@ -143,6 +143,22 @@ void vfio_pci_unmap_bar(struct vfio_pci_device *pci, unsigned int idx, void *mem
 		log_debug("failed to unmap bar region\n");
 }
 
+int iommufd_pci_open(/*struct vfio_pci_device *pci,*/ const char *bdf)
+{
+	unsigned long vfio_id;
+	int err;
+
+	err = pci_device_get_vfio_id(bdf, &vfio_id);
+	if (err) {
+		log_error("Could not determine the vfio device id for %s\n", bdf);
+		errno = EINVAL;
+		return -1;
+	}
+	fprintf(stderr, "We have found the device number %ld\n", vfio_id);
+
+	return 0;
+}
+
 int vfio_pci_open(struct vfio_pci_device *pci, const char *bdf)
 {
 	__autofree char *group = NULL;
