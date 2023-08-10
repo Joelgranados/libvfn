@@ -13,6 +13,8 @@
 #ifndef LIBVFN_VFIO_DEVICE_H
 #define LIBVFN_VFIO_DEVICE_H
 
+struct vfio_pci_device;
+
 struct vfio_device {
 	int fd;
 
@@ -20,6 +22,8 @@ struct vfio_device {
 
 	struct vfio_device_info device_info;
 	struct vfio_irq_info irq_info;
+
+	int (*get_dev_fd)(struct vfio_pci_device *pci, const char *bdf);
 };
 
 /**

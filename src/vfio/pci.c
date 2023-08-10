@@ -143,10 +143,17 @@ void vfio_pci_unmap_bar(struct vfio_pci_device *pci, unsigned int idx, void *mem
 		log_debug("failed to unmap bar region\n");
 }
 
-int iommufd_pci_open(/*struct vfio_pci_device *pci,*/ const char *bdf)
+static int iommufd_get_vfio_device_fd(struct vfio_pci_device *pci, const char *bdf)
 {
 	unsigned long vfio_id;
-	int err;
+	int err, iommufd, devfd;
+	__autofree char * devpath;
+	char * iommufd_dev_path = "/dev/iommu";
+
+	struct vfio_device_bind_iommufd bind = {
+		.argsz = sizeof(bind),
+		.flags = 0,
+	};
 
 	err = pci_device_get_vfio_id(bdf, &vfio_id);
 	if (err) {
@@ -154,12 +161,67 @@ int iommufd_pci_open(/*struct vfio_pci_device *pci,*/ const char *bdf)
 		errno = EINVAL;
 		return -1;
 	}
-	fprintf(stderr, "We have found the device number %ld\n", vfio_id);
+	log_info("We have found the device number %ld\n", vfio_id);
 
-	return 0;
+	iommufd = open(iommufd_dev_path, O_RDWR);
+	if (iommufd < 0) {
+		log_error("Error opening %s\n", iommufd_dev_path);
+		return -1;
+	}
+	log_info("Opened %s with fd %d\n", iommufd_dev_path, iommufd);
+
+	if (asprintf(&devpath, "/dev/vfio/devices/vfio%ld", vfio_id) < 0) {
+		log_debug("asprintf failed\n");
+		err = errno = EINVAL;
+		goto close_iommu;
+	}
+
+	devfd = open(devpath, O_RDWR);
+	if (devfd < 0) {
+		log_error("Error opening %s\n", devpath);
+		err = errno;
+		goto close_iommu;
+	}
+	log_info("Opened %s with fd %d\n", devpath, devfd);
+
+	bind.iommufd = iommufd;
+	err = ioctl(devfd, VFIO_DEVICE_BIND_IOMMUFD, &bind);
+	if (err) {
+		log_error("Error in VFIO_DEVICE_BIND_IOMMUFD ioctl (err: %d, errno:%d)\n",
+			  err, errno);
+		err = errno;
+		goto close_dev;
+	}
+	log_info("device file descriptor (%d) and iommufd file descriptor (%d)"
+		 " have been bound \n", devfd, iommufd);
+
+	if (!pci->dev.vfio)
+		pci->dev.vfio = &vfio_default_container;
+
+	iommu_init(&pci->dev.vfio->iommu);
+
+	pci->dev.fd = devfd;
+
+	goto close_iommu;
+
+close_dev:
+	err = close(devfd);
+	if (err) {
+		log_error("Error closing %s\n", devpath);
+		err = -errno;
+	}
+
+close_iommu:
+	err = close(iommufd);
+	if (err) {
+		log_error("Error closing /dev/iommu\n");
+		err = -errno;
+	}
+
+	return err;
 }
 
-int vfio_pci_open(struct vfio_pci_device *pci, const char *bdf)
+static int vfio_get_vfio_device_fd(struct vfio_pci_device *pci, const char *bdf)
 {
 	__autofree char *group = NULL;
 	int gfd;
@@ -185,6 +247,27 @@ int vfio_pci_open(struct vfio_pci_device *pci, const char *bdf)
 	pci->dev.fd = ioctl(gfd, VFIO_GROUP_GET_DEVICE_FD, bdf);
 	if (pci->dev.fd < 0) {
 		log_debug("failed to get device fd\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+static void vfio_pci_set_dev_be(struct vfio_device *dev) {
+	if (getenv("VFN_USE_IOMMUFD") != NULL)
+		dev->get_dev_fd = iommufd_get_vfio_device_fd;
+	else
+		dev->get_dev_fd = vfio_get_vfio_device_fd;
+}
+
+int vfio_pci_open(struct vfio_pci_device *pci, const char *bdf)
+{
+	pci->bdf = bdf;
+
+	vfio_pci_set_dev_be(&pci->dev);
+
+	if (pci->dev.get_dev_fd(pci, bdf)) {
+		log_debug("failed to get a vfio device file descriptor");
 		return -1;
 	}
 
