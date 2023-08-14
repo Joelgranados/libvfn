@@ -48,3 +48,12 @@ bool iommu_vaddr_to_iova(struct iommu_state *iommu, void *vaddr, uint64_t *iova)
 struct iova_mapping *iommu_find_mapping(struct iommu_state *iommu, void *vaddr);
 void iommu_clear(struct iommu_state *iommu);
 void iommu_clear_with(struct iommu_state *iommu, iova_mapping_iter_fn fn, void *opaque);
+
+int vfio_vfio_map_vaddr(void *iommu_be_data, void *vaddr, size_t len, uint64_t *iova);
+int vfio_vfio_unmap_vaddr(void *iommu_be_data, void *vaddr, size_t *len);
+int vfio_vfio_map_vaddr_ephemeral(void *iommu_be_data, void *vaddr, size_t len, uint64_t *iova);
+int vfio_vfio_unmap_ephemeral(void *iommu_be_data, size_t len, uint64_t iova);
+int vfio_iommufd_map_vaddr(void *iommu_be_data, void *vaddr, size_t len, uint64_t *iova);
+int vfio_iommufd_unmap_vaddr(void *iommu_be_data, void *vaddr, size_t *len);
+int vfio_iommufd_map_vaddr_ephemeral(void *iommu_be_data, void *vaddr, size_t len, uint64_t *iova);
+int vfio_iommufd_unmap_ephemeral(void *iommu_be_data, size_t len, uint64_t iova);

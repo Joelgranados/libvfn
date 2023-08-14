@@ -32,6 +32,7 @@
 #include <linux/limits.h>
 #include <linux/pci_regs.h>
 #include <linux/vfio.h>
+#include <linux/iommufd.h>
 
 #include "vfn/support/align.h"
 #include "vfn/support/atomic.h"
@@ -39,7 +40,9 @@
 #include "vfn/support/log.h"
 #include "vfn/support/mem.h"
 
+#include "vfn/vfio/device.h"
 #include "vfn/vfio/container.h"
+#include "vfn/vfio/iommu.h"
 
 #include "vfn/trace.h"
 
@@ -383,8 +386,60 @@ int vfio_get_group_fd(struct vfio_container *vfio, const char *path)
 	return group->fd;
 }
 
-int vfio_map_vaddr(struct vfio_container *vfio, void *vaddr, size_t len, uint64_t *iova)
+int vfio_iommufd_map_vaddr(void *iommu_be_data, void *vaddr, size_t len, uint64_t *iova)
 {
+	int err;
+	struct iommufd_element *iommufd = iommu_be_data;
+	struct vfio_device_attach_iommufd_pt attach_data = {
+		.argsz = sizeof(attach_data),
+		.flags = 0,
+	};
+
+	struct iommu_ioas_map map = {
+		.size = sizeof(map),
+		.flags = IOMMU_IOAS_MAP_READABLE |
+			 IOMMU_IOAS_MAP_WRITEABLE |
+			 IOMMU_IOAS_MAP_FIXED_IOVA,
+		.__reserved = 0,
+	};
+
+	log_info("To avoid comp warning%p, %ld, %p", vaddr, len, iova);
+	attach_data.pt_id = iommufd->ioas_id;
+	err = ioctl(iommufd->cdev_fd, VFIO_DEVICE_ATTACH_IOMMUFD_PT, &attach_data);
+	if (err) {
+		fprintf(stderr, "Error sending the VFIO_DEVICE_ATTACH_IOMMUFD_PT"
+				" ioctl (%d, %d)\n", err, errno);
+		err = -errno;
+		goto out;
+	}
+
+	// We do the memory allocation
+	map.user_va = (uint64_t)mmap(0, 1024*1024, PROT_READ | PROT_WRITE,
+				    MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+	map.iova = 0;
+	map.length = 1024 * 1024;
+	map.ioas_id = iommufd->ioas_id;
+	err = ioctl(iommufd->iommufd, IOMMU_IOAS_MAP, &map);
+	if (err) {
+		fprintf(stderr, "Error while executing the IOMMU_IOAS_MAP ioctl "
+				" (%d, %d)\n", err, errno);
+		err = -errno;
+		goto out;
+	}
+
+out:
+	return err;
+}
+
+int vfio_iommufd_unmap_vaddr(void *iommu_be_data, void *vaddr, size_t *len)
+{
+	log_info("To avoid comp warning %p, %p, %p", iommu_be_data, vaddr, len);
+	return -1;
+}
+
+int vfio_vfio_map_vaddr(void *iommu_be_data, void *vaddr, size_t len, uint64_t *iova)
+{
+	struct vfio_container *vfio = iommu_be_data;
 	uint64_t _iova;
 
 	if (iommu_vaddr_to_iova(&vfio->iommu, vaddr, &_iova))
@@ -412,8 +467,9 @@ out:
 	return 0;
 }
 
-int vfio_unmap_vaddr(struct vfio_container *vfio, void *vaddr, size_t *len)
+int vfio_vfio_unmap_vaddr(void *iommu_be_data, void *vaddr, size_t *len)
 {
+	struct vfio_container *vfio = iommu_be_data;
 	struct iova_mapping *m;
 
 	m = iommu_find_mapping(&vfio->iommu, vaddr);
@@ -435,8 +491,9 @@ int vfio_unmap_vaddr(struct vfio_container *vfio, void *vaddr, size_t *len)
 	return 0;
 }
 
-int vfio_map_vaddr_ephemeral(struct vfio_container *vfio, void *vaddr, size_t len, uint64_t *iova)
+int vfio_vfio_map_vaddr_ephemeral(void *iommu_be_data, void *vaddr, size_t len, uint64_t *iova)
 {
+	struct vfio_container *vfio = iommu_be_data;
 	if (iommu_get_ephemeral_iova(&vfio->iommu, len, iova)) {
 		log_error("failed to allocate ephemeral iova\n");
 
@@ -455,14 +512,48 @@ int vfio_map_vaddr_ephemeral(struct vfio_container *vfio, void *vaddr, size_t le
 	return 0;
 }
 
-int vfio_unmap_ephemeral_iova(struct vfio_container *vfio, size_t len, uint64_t iova)
+int vfio_vfio_unmap_ephemeral(void *iommu_be_data, size_t len, uint64_t iova)
 {
+	struct vfio_container *vfio = iommu_be_data;
 	if (vfio_do_unmap_dma(vfio, len, iova))
 		return -1;
 
 	iommu_put_ephemeral_iova(&vfio->iommu);
 
 	return 0;
+}
+
+int vfio_iommufd_map_vaddr_ephemeral(void *iommu_be_data, void *vaddr, size_t len, uint64_t *iova)
+{
+	log_info("To avoid comp warning %p, %p, %ld, %p", iommu_be_data, vaddr, len, iova);
+	return -1;
+}
+int vfio_iommufd_unmap_ephemeral(void *iommu_be_data, size_t len, uint64_t iova)
+{
+	log_info("To avoid comp warning %p, %ld, %ld", iommu_be_data, len, iova);
+	return -1;
+}
+
+int vfio_map_vaddr_ephemeral(struct vfio_iommu_be *iommu_be, void *vaddr,
+			      size_t len, uint64_t *iova)
+{
+	return iommu_be->map_ephimeral(iommu_be->data, vaddr, len, iova);
+}
+
+int vfio_unmap_ephemeral(struct vfio_iommu_be *iommu_be, size_t len, uint64_t iova)
+{
+	return iommu_be->unmap_ephimeral(iommu_be->data, len, iova);
+}
+
+int vfio_map_vaddr(struct vfio_iommu_be *iommu_be, void *vaddr,
+		   size_t len, uint64_t *iova)
+{
+	return iommu_be->map(iommu_be->data, vaddr, len, iova);
+}
+
+int vfio_unmap_vaddr(struct vfio_iommu_be *iommu_be, void *vaddr, size_t *len)
+{
+	return iommu_be->unmap(iommu_be->data, vaddr, len);
 }
 
 int vfio_get_iova_ranges(struct vfio_container *vfio, struct vfio_iova_range **ranges)

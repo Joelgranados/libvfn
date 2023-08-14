@@ -98,7 +98,7 @@ int nvme_configure_cq(struct nvme_ctrl *ctrl, unsigned int qid, unsigned int qsi
 
 	len = pgmapn(&cq->vaddr, qsize, 1 << NVME_CQES);
 
-	if (vfio_map_vaddr(ctrl->pci.dev.vfio, cq->vaddr, len, &cq->iova)) {
+	if (vfio_map_vaddr(&ctrl->pci.dev.iommu_be, cq->vaddr, len, &cq->iova)) {
 		log_debug("failed to map vaddr\n");
 
 		pgunmap(cq->vaddr, len);
@@ -117,7 +117,7 @@ void nvme_discard_cq(struct nvme_ctrl *ctrl, struct nvme_cq *cq)
 
 	len = ALIGN_UP((size_t)cq->qsize << NVME_CQES, __VFN_PAGESIZE);
 
-	if (vfio_unmap_vaddr(ctrl->pci.dev.vfio, cq->vaddr, NULL))
+	if (vfio_unmap_vaddr(&ctrl->pci.dev.iommu_be, cq->vaddr, NULL))
 		log_debug("failed to unmap vaddr\n");
 
 	pgunmap(cq->vaddr, len);
@@ -171,7 +171,8 @@ int nvme_configure_sq(struct nvme_ctrl *ctrl, unsigned int qid, unsigned int qsi
 	if (len < 0)
 		return -1;
 
-	if (vfio_map_vaddr(ctrl->pci.dev.vfio, sq->pages.vaddr, len, &sq->pages.iova)) {
+	if (vfio_map_vaddr(&ctrl->pci.dev.iommu_be, sq->pages.vaddr,
+			   len, &sq->pages.iova)) {
 		log_debug("failed to map vaddr\n");
 		goto unmap_pages;
 	}
@@ -196,7 +197,7 @@ int nvme_configure_sq(struct nvme_ctrl *ctrl, unsigned int qid, unsigned int qsi
 	if (len < 0)
 		goto free_sq_rqs;
 
-	if (vfio_map_vaddr(ctrl->pci.dev.vfio, sq->vaddr, len, &sq->iova)) {
+	if (vfio_map_vaddr(&ctrl->pci.dev.iommu_be, sq->vaddr, len, &sq->iova)) {
 		log_debug("failed to map vaddr\n");
 		goto unmap_sq;
 	}
@@ -208,7 +209,7 @@ unmap_sq:
 free_sq_rqs:
 	free(sq->rqs);
 unmap_pages:
-	if (vfio_unmap_vaddr(ctrl->pci.dev.vfio, sq->pages.vaddr, NULL))
+	if (vfio_unmap_vaddr(&ctrl->pci.dev.iommu_be, sq->pages.vaddr, NULL))
 		log_debug("failed to unmap vaddr\n");
 
 	pgunmap(sq->pages.vaddr, (size_t)sq->qsize << __VFN_PAGESHIFT);
@@ -225,7 +226,7 @@ void nvme_discard_sq(struct nvme_ctrl *ctrl, struct nvme_sq *sq)
 
 	len = ALIGN_UP((size_t)sq->qsize << NVME_SQES, __VFN_PAGESIZE);
 
-	if (vfio_unmap_vaddr(ctrl->pci.dev.vfio, sq->vaddr, NULL))
+	if (vfio_unmap_vaddr(&ctrl->pci.dev.iommu_be, sq->vaddr, NULL))
 		log_debug("failed to unmap vaddr\n");
 
 	pgunmap(sq->vaddr, len);
@@ -234,7 +235,7 @@ void nvme_discard_sq(struct nvme_ctrl *ctrl, struct nvme_sq *sq)
 
 	len = (size_t)sq->qsize << __VFN_PAGESHIFT;
 
-	if (vfio_unmap_vaddr(ctrl->pci.dev.vfio, sq->pages.vaddr, NULL))
+	if (vfio_unmap_vaddr(&ctrl->pci.dev.iommu_be, sq->pages.vaddr, NULL))
 		log_debug("failed to unmap vaddr\n");
 
 	pgunmap(sq->pages.vaddr, len);
@@ -456,13 +457,15 @@ static int nvme_init_dbconfig(struct nvme_ctrl *ctrl)
 	if (pgmap((void **)&ctrl->dbbuf.doorbells, __VFN_PAGESIZE) < 0)
 		return -1;
 
-	if (vfio_map_vaddr(ctrl->pci.dev.vfio, ctrl->dbbuf.doorbells, __VFN_PAGESIZE, &prp1))
+	if (vfio_map_vaddr(&ctrl->pci.dev.iommu_be, ctrl->dbbuf.doorbells,
+			   __VFN_PAGESIZE, &prp1))
 		return -1;
 
 	if (pgmap((void **)&ctrl->dbbuf.eventidxs, __VFN_PAGESIZE) < 0)
 		return -1;
 
-	if (vfio_map_vaddr(ctrl->pci.dev.vfio, ctrl->dbbuf.eventidxs, __VFN_PAGESIZE, &prp2))
+	if (vfio_map_vaddr(&ctrl->pci.dev.iommu_be, ctrl->dbbuf.eventidxs,
+			   __VFN_PAGESIZE, &prp2))
 		return -1;
 
 	cmd = (union nvme_cmd) {
@@ -698,7 +701,7 @@ int nvme_oneshot(struct nvme_ctrl *ctrl, struct nvme_sq *sq, void *sqe, void *bu
 		return -1;
 
 	if (buf) {
-		ret = vfio_map_vaddr_ephemeral(ctrl->pci.dev.vfio, buf, len, &iova);
+		ret = vfio_map_vaddr_ephemeral(&ctrl->pci.dev.iommu_be, buf, len, &iova);
 		if (ret)
 			goto release_rq;
 
@@ -721,7 +724,7 @@ int nvme_oneshot(struct nvme_ctrl *ctrl, struct nvme_sq *sq, void *sqe, void *bu
 		memcpy(cqe_copy, &cqe, 1 << NVME_CQES);
 
 	if (buf)
-		ret = vfio_unmap_ephemeral_iova(ctrl->pci.dev.vfio, len, iova);
+		ret = vfio_unmap_ephemeral(&ctrl->pci.dev.iommu_be, len, iova);
 
 release_rq:
 	nvme_rq_release_atomic(rq);

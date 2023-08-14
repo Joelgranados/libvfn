@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: LGPL-2.1-or-later or MIT */
 
 /*
  * This file is part of libvfn.
@@ -14,17 +13,26 @@
 #define LIBVFN_VFIO_DEVICE_H
 
 struct vfio_pci_device;
+struct vfio_iommu_be {
+	//struct iommu_state *iommu;
+	void *data;
+	int (*get_dev_fd)(struct vfio_pci_device *pci, const char *bdf);
+	int (*map)(void *iommu_be_data, void *vaddr, size_t len, uint64_t *iova);
+	int (*unmap)(void *iommu_be_data, void *vaddr, size_t *len);
+	int (*map_ephimeral)(void *iommu_be_data, void *vaddr, size_t len, uint64_t *iova);
+	int (*unmap_ephimeral)(void *iommu_be_data, size_t len, uint64_t iova);
+};
 
 struct vfio_device {
 	int fd;
 
-	struct vfio_container *vfio;
+	//struct vfio_container *vfio;
+	struct vfio_iommu_be iommu_be;
 
 	struct vfio_device_info device_info;
 	struct vfio_irq_info irq_info;
-
-	int (*get_dev_fd)(struct vfio_pci_device *pci, const char *bdf);
 };
+
 
 /**
  * vfio_set_irq - Enable IRQs through eventfds

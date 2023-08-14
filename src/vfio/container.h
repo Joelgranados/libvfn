@@ -25,6 +25,12 @@ struct vfio_container {
 	struct iommu_state iommu;
 };
 
+struct iommufd_element { 
+	int cdev_fd;
+	uint32_t ioas_id;
+	int iommufd;
+};
+
 extern struct vfio_container vfio_default_container;
 
 int vfio_get_group_fd(struct vfio_container *vfio, const char *path);

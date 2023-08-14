@@ -29,6 +29,7 @@ extern "C" {
 #include <vfn/vfio/container.h>
 #include <vfn/vfio/device.h>
 #include <vfn/vfio/pci.h>
+#include <vfn/vfio/iommu.h>
 
 #ifdef __cplusplus
 }

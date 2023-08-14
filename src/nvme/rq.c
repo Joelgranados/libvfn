@@ -38,6 +38,7 @@
 #include <vfn/support/mem.h>
 #include <vfn/trace.h>
 #include <vfn/vfio.h>
+#include <vfn/vfio/iommu.h>
 #include <vfn/nvme/types.h>
 #include <vfn/nvme/queue.h>
 #include <vfn/nvme/ctrl.h>

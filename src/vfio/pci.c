@@ -32,6 +32,7 @@
 #include <linux/limits.h>
 #include <linux/vfio.h>
 #include <linux/pci_regs.h>
+#include <linux/iommufd.h>
 
 #include "vfn/support/atomic.h"
 #include "vfn/support/compiler.h"
@@ -149,9 +150,15 @@ static int iommufd_get_vfio_device_fd(struct vfio_pci_device *pci, const char *b
 	int err, iommufd, devfd;
 	__autofree char * devpath;
 	char * iommufd_dev_path = "/dev/iommu";
+	struct iommufd_element *iommufd_data = malloc(sizeof(struct iommufd_element));
 
 	struct vfio_device_bind_iommufd bind = {
 		.argsz = sizeof(bind),
+		.flags = 0,
+	};
+
+	struct iommu_ioas_alloc alloc_data = {
+		.size = sizeof(alloc_data),
 		.flags = 0,
 	};
 
@@ -195,14 +202,23 @@ static int iommufd_get_vfio_device_fd(struct vfio_pci_device *pci, const char *b
 	log_info("device file descriptor (%d) and iommufd file descriptor (%d)"
 		 " have been bound \n", devfd, iommufd);
 
-	if (!pci->dev.vfio)
-		pci->dev.vfio = &vfio_default_container;
+	err = ioctl(iommufd, IOMMU_IOAS_ALLOC, &alloc_data);
+	if (err) {
+		fprintf(stderr, "Error sending the IOMMU_IOAS_ALLOC  ioctl (%d, %d)\n",
+			err, errno);
+		err = -errno;
+		goto close_dev;
+	}
 
-	iommu_init(&pci->dev.vfio->iommu);
+	//iommu_init(pci->dev.iommu_be.iommu);
 
 	pci->dev.fd = devfd;
 
-	goto close_iommu;
+	iommufd_data->ioas_id = alloc_data.out_ioas_id;
+	iommufd_data->iommufd = iommufd;
+	pci->dev.iommu_be.data = iommufd_data;
+
+	goto out;
 
 close_dev:
 	err = close(devfd);
@@ -218,6 +234,7 @@ close_iommu:
 		err = -errno;
 	}
 
+out:
 	return err;
 }
 
@@ -237,10 +254,10 @@ static int vfio_get_vfio_device_fd(struct vfio_pci_device *pci, const char *bdf)
 
 	log_info("vfio iommu group is %s\n", group);
 
-	if (!pci->dev.vfio)
-		pci->dev.vfio = &vfio_default_container;
+	if (!pci->dev.iommu_be.data)
+		pci->dev.iommu_be.data = &vfio_default_container;
 
-	gfd = vfio_get_group_fd(pci->dev.vfio, group);
+	gfd = vfio_get_group_fd(pci->dev.iommu_be.data, group);
 	if (gfd < 0)
 		return -1;
 
@@ -254,10 +271,19 @@ static int vfio_get_vfio_device_fd(struct vfio_pci_device *pci, const char *bdf)
 }
 
 static void vfio_pci_set_dev_be(struct vfio_device *dev) {
-	if (getenv("VFN_USE_IOMMUFD") != NULL)
-		dev->get_dev_fd = iommufd_get_vfio_device_fd;
-	else
-		dev->get_dev_fd = vfio_get_vfio_device_fd;
+	if (getenv("VFN_USE_IOMMUFD") != NULL) {
+		dev->iommu_be.get_dev_fd = iommufd_get_vfio_device_fd;
+		dev->iommu_be.map = vfio_iommufd_map_vaddr;
+		dev->iommu_be.unmap = vfio_iommufd_unmap_vaddr;
+		dev->iommu_be.unmap_ephimeral = vfio_iommufd_unmap_ephemeral;
+		dev->iommu_be.map_ephimeral = vfio_iommufd_map_vaddr_ephemeral;
+	} else {
+		dev->iommu_be.get_dev_fd = vfio_get_vfio_device_fd;
+		dev->iommu_be.map = vfio_vfio_map_vaddr;
+		dev->iommu_be.unmap = vfio_vfio_unmap_vaddr;
+		dev->iommu_be.unmap_ephimeral = vfio_vfio_unmap_ephemeral;
+		dev->iommu_be.map_ephimeral = vfio_vfio_map_vaddr_ephemeral;
+	}
 }
 
 int vfio_pci_open(struct vfio_pci_device *pci, const char *bdf)
@@ -266,7 +292,7 @@ int vfio_pci_open(struct vfio_pci_device *pci, const char *bdf)
 
 	vfio_pci_set_dev_be(&pci->dev);
 
-	if (pci->dev.get_dev_fd(pci, bdf)) {
+	if (pci->dev.iommu_be.get_dev_fd(pci, bdf)) {
 		log_debug("failed to get a vfio device file descriptor");
 		return -1;
 	}
