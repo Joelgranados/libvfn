@@ -63,9 +63,11 @@ config_host = configuration_data()
 config_host.set('NVME_AQ_QSIZE', get_option('aq_qsize'),
   description: 'admin command queue size')
 
-config_host.set('HAVE_VFIO_DEVICE_BIND_IOMMUFD',
+config_host.set('USE_IOMMUFD_BACKEND',
   cc.has_header_symbol('linux/vfio.h', 'VFIO_DEVICE_BIND_IOMMUFD'),
-  description: 'weather VFIO_DEVICE_BIND_IOMMUFD is defined in linux/vfio.h')
+  description: 'Weather libvfn is compiled with the kernel\'s iommufd backend.'
+  + 'Compile with iommufd when VFIO_DEVICE_BIND_IOMMUFD is defined in linux/vfio.h.'
+  + 'Compile without iommufd otherwise')
 
 subdir('internal')
 

@@ -4,7 +4,7 @@ vfio_sources = files(
   'pci.c',
 )
 
-if not config_host.get('HAVE_VFIO_DEVICE_BIND_IOMMUFD', false)
+if not config_host.get('USE_IOMMUFD_BACKEND', false)
   as_sources += files('container.c',)
 endif
 

@@ -10,25 +10,25 @@
  * COPYING and LICENSE files for more information.
  */
 
-#ifndef HAVE_VFIO_DEVICE_BIND_IOMMUFD
+#ifndef USE_IOMMUFD_BACKEND
 struct vfio_group {
 	int fd;
 	struct vfio_container *container;
 
 	const char *path;
 };
-#endif // HAVE_VFIO_DEVICE_BIND_IOMMUFD
+#endif // USE_IOMMUFD_BACKEND
 
 #define VFN_MAX_VFIO_GROUPS 64
 
 struct vfio_container {
 	int fd;
 	struct iommu_state iommu;
-#ifndef HAVE_VFIO_DEVICE_BIND_IOMMUFD
+#ifndef USE_IOMMUFD_BACKEND
 	struct vfio_group groups[VFN_MAX_VFIO_GROUPS];
 #else
 	uint32_t ioas_id;
-#endif // HAVE_VFIO_DEVICE_BIND_IOMMUFD
+#endif // USE_IOMMUFD_BACKEND
 };
 
 extern struct vfio_container vfio_default_container;
