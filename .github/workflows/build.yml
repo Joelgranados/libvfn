@@ -126,6 +126,46 @@ jobs:
       - name: compile
         run: meson compile -C build
 
+  iommu-bakend-builds:
+    name: "iommu backend tests (iommufd, vfio)"
+
+    needs: [sanity]
+
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        force-vfio: [true, false]
+
+    container:
+      image: fedora:rawhide
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v3
+
+      - name: install dependencies
+        env:
+          SETUP_SCRIPT: .github/scripts/build/fedora-setup-rawhide.sh
+        run: ${SETUP_SCRIPT}
+
+      - name: configure build
+        run: meson setup build -Dlibnvme=disabled -Dforce-vfio=${{ matrix.foce-vfio }}
+
+      - name: compile
+        run: ninja -C build
+
+      - name: upload log
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: meson log
+          path: build/meson-logs/meson-log.txt
+
+      - name: unit tests
+        run: meson test -C build "libvfn:"
+
+
   dist-builds:
     name: "distribution builds"
 
