@@ -35,6 +35,7 @@ extern "C" {
 #include <vfn/support.h>
 #include <vfn/trace.h>
 #include <vfn/trace/events.h>
+#include <vfn/iommu.h>
 #include <vfn/vfio.h>
 #include <vfn/iommu.h>
 #include <vfn/nvme/types.h>
