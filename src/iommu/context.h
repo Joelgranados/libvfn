@@ -43,6 +43,12 @@ struct iova_map {
 	struct skiplist list;
 };
 
+struct iommu_hwpt_iopf {
+	uint32_t dev_id;
+	uint32_t ioas_id;
+	int32_t iopf_fd;
+};
+
 struct iommu_ctx {
 	struct iova_map map;
 	struct iommu_ctx_ops ops;
@@ -50,6 +56,7 @@ struct iommu_ctx {
 	pthread_mutex_t lock;
 	int nranges;
 	struct iommu_iova_range *iova_ranges;
+	struct iommu_hwpt_iopf iopf;
 };
 
 struct iommu_ctx *iommu_get_default_context(void);

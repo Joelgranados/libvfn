@@ -188,3 +188,12 @@ int vfio_pci_open(struct vfio_pci_device *pci, const char *bdf)
 
 	return 0;
 }
+
+int32_t pci_get_dev_iopf_fd(struct vfio_pci_device *pci)
+{
+	return pci->dev.ctx->iopf.iopf_fd;
+}
+
+
+
+

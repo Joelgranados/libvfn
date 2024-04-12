@@ -16,7 +16,9 @@
  * more details.
  */
 
+#include "linux/iommufd.h"
 #include <vfn/nvme.h>
+#include <vfn/pci.h>
 
 #include <nvme/types.h>
 
@@ -25,6 +27,7 @@
 #include "ccan/str/str.h"
 
 #include "common.h"
+#include "vfn/vfio/pci.h"
 
 static bool op_write, op_read;
 static unsigned int op_len;
@@ -73,6 +76,50 @@ unsigned int get_lb_bytes(struct nvme_ctrl *ctrl, unsigned long nsid)
 
 	pgunmap(vaddr, len);
 	return lb_bytes;
+}
+
+void handle_iopf(struct nvme_ctrl *ctrl)
+{
+	int iopf_fd = pci_get_dev_iopf_fd(&ctrl->pci);
+	struct iommu_hwpt_pgfault pgfault = {0};
+
+	if (iopf_fd <= 0)
+		return;
+
+	fprintf(stderr, "iopf_fd : %d\n", iopf_fd);
+
+	/* Give the kenel time to process the iopf before getting the iopf*/
+	sleep(1);
+	if (0 > read(iopf_fd, &pgfault, sizeof(pgfault))) {
+		fprintf(stderr, "Error reading from pagefault fd\n");
+		return;
+	}
+
+	/* no page faults, nothing to do */
+	if (pgfault.size == 0)
+		return;
+
+	struct iommu_hwpt_page_response pgfault_response = {
+		.size = sizeof(struct iommu_hwpt_page_response),
+		.flags = 0,
+		.dev_id = pgfault.dev_id,
+		.pasid = pgfault.pasid,
+		.grpid = pgfault.grpid,
+		.code = 0,
+		.addr = pgfault.addr
+	};
+
+	if (0 > write(iopf_fd, &pgfault_response, sizeof(pgfault_response))) {
+		fprintf(stderr, "Error writing to pagefault fd\n");
+		return;
+	}
+
+	fprintf(stderr, "Handled iopf ::\n\tsize : %d\n\tflags : %d\n\tdev_id : %d\n\t"
+		"pasid : %d\n\tgrpid : %d\n\tperm : %d\n\taddr : %lld\n",
+		pgfault.size, pgfault.flags, pgfault.dev_id,
+		pgfault.pasid, pgfault.grpid, pgfault.perm,
+		pgfault.addr);
+
 }
 
 int main(int argc, char **argv)
@@ -142,6 +189,9 @@ int main(int argc, char **argv)
 		err(1, "could not map prps");
 
 	nvme_rq_exec(rq, &cmd);
+
+
+	handle_iopf(&ctrl);
 
 	if (nvme_rq_spin(rq, NULL))
 		err(1, "nvme_rq_poll");

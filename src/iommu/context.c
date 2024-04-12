@@ -83,4 +83,7 @@ void iommu_ctx_init(struct iommu_ctx *ctx)
 
 	skiplist_init(&ctx->map.list);
 	pthread_mutex_init(&ctx->map.lock, NULL);
+	ctx->iopf.iopf_fd = -1;
+	ctx->iopf.dev_id = -1;
+	ctx->iopf.ioas_id = -1;
 }

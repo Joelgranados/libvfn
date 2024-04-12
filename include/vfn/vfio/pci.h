@@ -75,6 +75,8 @@ void *vfio_pci_map_bar(struct vfio_pci_device *pci, int idx, size_t len, uint64_
 void vfio_pci_unmap_bar(struct vfio_pci_device *pci, int idx, void *mem, size_t len,
 			uint64_t offset);
 
+int32_t pci_get_dev_iopf_fd(struct vfio_pci_device *pci);
+
 /**
  * vfio_pci_read_config - Read from the PCI configuration space
  * @pci: &struct vfio_pci_device
