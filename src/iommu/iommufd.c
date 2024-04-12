@@ -95,6 +95,49 @@ static int iommu_ioas_update_iova_ranges(struct iommu_ioas *ioas)
 	return 0;
 }
 
+static int
+get_iopf_capable_ioas(struct iommu_ioas *ioas, int pcidev_id)
+{
+	int ret;
+	struct iommu_fault_alloc fault = {
+		.size = sizeof(fault),
+		.flags = 0,
+	};
+
+	struct iommu_hwpt_alloc fault_cmd = {
+		.size = sizeof(fault_cmd),
+		.flags = IOMMU_HWPT_FAULT_ID_VALID,
+		.dev_id = pcidev_id,
+		.pt_id = ioas->id,
+		.data_len = 0,
+		.data_uptr = (uint64_t)NULL,
+		.__reserved = 0,
+		};
+
+	log_debug("Going to execute IOMMU_FAULT_ALLOC ioctl\n");
+	ret =ioctl(__iommufd, IOMMU_FAULT_ALLOC, &fault);
+	if (ret) {
+		log_debug("Error allocating the fault allocation object\n");
+		return -1;
+	}
+	fault_cmd.fault_id = fault.out_fault_id;
+
+	log_debug("Going to execute IOMMU_HWPT_ALLOC ioctl, fault.flags %d\n",
+			fault_cmd.flags);
+	if (ioctl(__iommufd, IOMMU_HWPT_ALLOC, &fault_cmd)) {
+		log_debug("Error IOMMU_HWPT_ALLOC errno: %d, __iommufd: %d, devid : %d\n",
+			  errno, __iommufd, pcidev_id);
+		return -1;
+	}
+
+	if (fault.out_fault_fd == 0) {
+		log_debug("Erroneous output fd : %d\n", fault.out_fault_fd);
+		return -1;
+	}
+
+	return 0;
+}
+
 static int iommufd_get_device_fd(struct iommu_ctx *ctx, const char *bdf)
 {
 	struct iommu_ioas *ioas = container_of_var(ctx, ioas, ctx);
@@ -132,13 +175,21 @@ static int iommufd_get_device_fd(struct iommu_ctx *ctx, const char *bdf)
 		return -1;
 	}
 
+	log_debug("Going to execute VFIO_DEVICE_BIND_IOMMUFD ioctl on the device fd : %d\n"
+			, devfd);
 	if (ioctl(devfd, VFIO_DEVICE_BIND_IOMMUFD, &bind)) {
 		log_debug("could not bind device to iommufd\n");
 		goto close_dev;
 	}
 
+	log_debug("Going to execute VFIO_DEVICE_ATTACH_IOMMUFD_PT ioctl\n");
 	if (ioctl(devfd, VFIO_DEVICE_ATTACH_IOMMUFD_PT, &attach_data)) {
 		log_debug("could not associate device with ioas\n");
+		goto close_dev;
+	}
+
+	if (get_iopf_capable_ioas(ioas, bind.out_devid)){
+		log_debug("Error in testing nested parent\n");
 		goto close_dev;
 	}
 
@@ -146,6 +197,7 @@ static int iommufd_get_device_fd(struct iommu_ctx *ctx, const char *bdf)
 		log_debug("could not update iova ranges\n");
 		goto close_dev;
 	}
+
 
 	return devfd;
 
@@ -159,6 +211,7 @@ close_dev:
 static int iommu_ioas_do_dma_map(struct iommu_ctx *ctx, void *vaddr, size_t len, uint64_t *iova,
 				 unsigned long flags)
 {
+	int ret;
 	struct iommu_ioas *ioas = container_of_var(ctx, ioas, ctx);
 
 	struct iommu_ioas_map map = {
@@ -187,7 +240,8 @@ static int iommu_ioas_do_dma_map(struct iommu_ctx *ctx, void *vaddr, size_t len,
 			trace_emit("vaddr %p iova AUTO len %zu\n", vaddr, len);
 	}
 
-	if (ioctl(__iommufd, IOMMU_IOAS_MAP, &map)) {
+	ret = ioctl(__iommufd, IOMMU_IOAS_MAP, &map);
+	if (ret) {
 		log_debug("failed to map\n");
 		return -1;
 	}
