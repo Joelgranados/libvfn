@@ -114,8 +114,10 @@ int main(int argc, char **argv)
 
 	vaddr = mmap(NULL, op_len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
 
-	if (iommu_map_vaddr(__iommu_ctx(&ctrl), vaddr, op_len, &iova, 0x0))
-		err(1, "failed to reserve iova");
+//	if (iommu_map_vaddr(__iommu_ctx(&ctrl), vaddr, op_len, &iova, 0x0))
+//		err(1, "failed to reserve iova");
+	iova = 0x9fffffffff;
+	fprintf(stderr, "iova : %lx, vaddr: %p\n", iova, vaddr);
 
 	if (op_write) {
 		fprintf(stderr, "reading payload\n");
