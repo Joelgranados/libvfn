@@ -135,6 +135,10 @@ get_iopf_capable_ioas(struct iommu_ioas *ioas, int pcidev_id)
 		return -1;
 	}
 
+	ioas->ctx.iopf.dev_id = fault_cmd.dev_id;
+	ioas->ctx.iopf.ioas_id = ioas->id;
+	ioas->ctx.iopf.iopf_fd = fault.out_fault_fd;
+
 	return 0;
 }
 
