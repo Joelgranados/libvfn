@@ -158,5 +158,6 @@ int main(int argc, char **argv)
 
 	nvme_close(&ctrl);
 
+	fprintf(stderr, "Exiting the program...\n");
 	return 0;
 }
