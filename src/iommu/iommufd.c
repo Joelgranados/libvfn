@@ -114,10 +114,10 @@ get_iopf_capable_ioas(struct iommu_ioas *ioas, int pcidev_id)
 		.__reserved = 0,
 		};
 
-	log_debug("Going to execute IOMMU_FAULT_ALLOC ioctl\n");
-	ret =ioctl(__iommufd, IOMMU_FAULT_ALLOC, &fault);
+	log_debug("Going to execute IOMMUFD_CMD_FAULT_QUEUE_ALLOC ioctl\n");
+	ret =ioctl(__iommufd, IOMMU_FAULT_QUEUE_ALLOC, &fault);
 	if (ret) {
-		log_debug("Error allocating the fault allocation object\n");
+		log_debug("Error allocating the fault allocation object (ret : %d)\n", ret);
 		return -1;
 	}
 	fault_cmd.fault_id = fault.out_fault_id;
