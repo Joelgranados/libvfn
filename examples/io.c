@@ -80,35 +80,47 @@ unsigned int get_lb_bytes(struct nvme_ctrl *ctrl, unsigned long nsid)
 	return lb_bytes;
 }
 
-void handle_iopf(struct nvme_ctrl *ctrl)
+int handle_iopf(struct nvme_ctrl *ctrl, void *vaddr, int op_len, uint64_t iova )
 {
 	int iopf_fd = pci_get_dev_iopf_fd(&ctrl->pci);
 	struct iommu_hwpt_pgfault pgfault = {0};
 	ssize_t read_ret;
+	uint64_t iova_tmp;
 
 	if (iopf_fd <= 0)
-		return;
+		return 0;
 
 	fprintf(stderr, "iopf_fd : %d\n", iopf_fd);
 
-	/* Give the kenel time to process the iopf before getting the iopf*/
+	/* Give the kenel time to process the iopf */
 	sleep(1);
 	read_ret = read(iopf_fd, &pgfault, sizeof(pgfault));
-	if (read_ret == 0)
-		return; // no page faults
-	else if (0 > read_ret) {
+	if (read_ret == 0) {
+		fprintf(stderr, "no iopf fd\n");
+		return 0; // no page faults
+	} else if (0 > read_ret) {
 		fprintf(stderr, "Error reading from pagefault fd\n");
-		return;
+		return 1;
 	}
 
 	struct iommu_hwpt_page_response pgfault_response = {
 		.cookie = pgfault.cookie,
-		.code = 0,
+		.code = IOMMUFD_PAGE_RESP_SUCCESS,
 	};
+
+	iova_tmp = iova;
+	if (iommu_map_vaddr(__iommu_ctx(ctrl), vaddr, op_len, &iova, IOMMU_MAP_FIXED_IOVA))
+		err(1, "failed to reserve iova");
+
+	if (iova_tmp != iova) {
+		fprintf(stderr, "Different IOVAs with IOMMU_MAP_FIXED_IOVA %lx != %lx",
+				iova_tmp, iova);
+		return 1;
+	}
 
 	if (0 > write(iopf_fd, &pgfault_response, sizeof(pgfault_response))) {
 		fprintf(stderr, "Error writing to pagefault fd\n");
-		return;
+		return 1;
 	}
 
 	fprintf(stderr, "Handled iopf ::\n\tflags : %d\n\tdev_id : %d\n\t"
@@ -116,7 +128,7 @@ void handle_iopf(struct nvme_ctrl *ctrl)
 		pgfault.flags, pgfault.dev_id,
 		pgfault.pasid, pgfault.grpid, pgfault.perm,
 		pgfault.addr);
-
+	return 0;
 }
 
 int main(int argc, char **argv)
@@ -197,7 +209,9 @@ int main(int argc, char **argv)
 
 	nvme_rq_exec(rq, &cmd);
 
-	handle_iopf(&ctrl);
+	if (test_iopf)
+		if (handle_iopf(&ctrl, vaddr, op_len, iova))
+			err(1, "error in handle_iopf");
 
 	if (nvme_rq_spin(rq, NULL))
 		err(1, "nvme_rq_poll");
