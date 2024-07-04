@@ -33,6 +33,7 @@ static bool op_write, op_read;
 static unsigned int op_len;
 static unsigned long nsid;
 static int fd;
+static char* op_iopf_iova;
 
 static const struct nvme_ctrl_opts ctrl_opts = {
 	.nsqr = 63,
@@ -45,6 +46,7 @@ static struct opt_table opts[] = {
 	OPT_WITHOUT_ARG("-w|--write", opt_set_bool, &op_write, "perform a write"),
 	OPT_WITHOUT_ARG("-r|--read", opt_set_bool, &op_read, "perform a read"),
 	OPT_WITH_ARG("-z|--size", opt_set_uintval_bi, opt_show_uintval_bi, &op_len, "size of operation"),
+	OPT_WITH_ARG("--iopf", opt_set_charp, opt_show_charp, &op_iopf_iova, "test iopf with this iova"),
 	OPT_ENDTABLE,
 };
 
@@ -120,8 +122,9 @@ void handle_iopf(struct nvme_ctrl *ctrl)
 int main(int argc, char **argv)
 {
 	void *vaddr;
-	uint64_t iova;
+	uint64_t iova = 0;
 	int ret;
+	bool test_iopf;
 
 	struct nvme_ctrl ctrl = {};
 	struct nvme_rq *rq;
@@ -138,6 +141,14 @@ int main(int argc, char **argv)
 
 	if (op_write == op_read)
 		opt_usage_exit_fail("specify one of -r or -w");
+
+	test_iopf = op_iopf_iova != NULL;
+	if (test_iopf) {
+		if (sscanf(op_iopf_iova, "%lx", &iova) != 1)
+			opt_usage_exit_fail("error reading --iopf");
+	}
+
+	fprintf(stderr, "iova : %lx, test_iopf: %d, op_iopf_iova : %s\n", iova, test_iopf, op_iopf_iova);
 
 	opt_free_table();
 
@@ -156,9 +167,10 @@ int main(int argc, char **argv)
 
 	vaddr = mmap(NULL, op_len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
 
-//	if (iommu_map_vaddr(__iommu_ctx(&ctrl), vaddr, op_len, &iova, 0x0))
-//		err(1, "failed to reserve iova");
-	iova = 0x9fffffffff;
+	if (!test_iopf) {
+		if (iommu_map_vaddr(__iommu_ctx(&ctrl), vaddr, op_len, &iova, 0x0))
+			err(1, "failed to reserve iova");
+	}
 	fprintf(stderr, "iova : %lx, vaddr: %p\n", iova, vaddr);
 
 	if (op_write) {
@@ -184,7 +196,6 @@ int main(int argc, char **argv)
 		err(1, "could not map prps");
 
 	nvme_rq_exec(rq, &cmd);
-
 
 	handle_iopf(&ctrl);
 
