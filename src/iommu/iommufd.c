@@ -114,6 +114,19 @@ get_iopf_capable_ioas(struct iommu_ioas *ioas, int pcidev_id)
 		.__reserved = 0,
 		};
 
+	struct iommu_fault_enable iopf_enable = {
+		.size = sizeof(iopf_enable),
+		.flags = 0,
+		.dev_id = pcidev_id
+	};
+
+	log_debug("Going to execute IOMMU_FAULT_IOPF_ENABLE");
+	ret = ioctl(__iommufd, IOMMU_FAULT_IOPF_ENABLE, &iopf_enable);
+	if (ret) {
+		log_debug("Error enabling iopf in pciedevice :%d\n", iopf_enable.dev_id);
+		return -1;
+	}
+
 	log_debug("Going to execute IOMMUFD_CMD_FAULT_QUEUE_ALLOC ioctl\n");
 	ret =ioctl(__iommufd, IOMMU_FAULT_QUEUE_ALLOC, &fault);
 	if (ret) {
