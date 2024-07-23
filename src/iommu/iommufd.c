@@ -205,8 +205,8 @@ static int iommufd_get_device_fd(struct iommu_ctx *ctx, const char *bdf)
 		goto close_dev;
 	}
 
-	if (get_iopf_capable_ioas(ioas, bind.out_devid)){
-		log_debug("Error in testing nested parent\n");
+	if (get_iopf_capable_ioas(ioas, bind.out_devid, devfd)){
+		log_debug("Error in enabling iopf for dev\n");
 		goto close_dev;
 	}
 
