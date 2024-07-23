@@ -96,7 +96,7 @@ static int iommu_ioas_update_iova_ranges(struct iommu_ioas *ioas)
 }
 
 static int
-get_iopf_capable_ioas(struct iommu_ioas *ioas, int pcidev_id)
+get_iopf_capable_ioas(struct iommu_ioas *ioas, int pcidev_id, int dev_fd)
 {
 	int ret;
 	struct iommu_fault_alloc fault = {
@@ -114,18 +114,10 @@ get_iopf_capable_ioas(struct iommu_ioas *ioas, int pcidev_id)
 		.__reserved = 0,
 		};
 
-	struct iommu_fault_enable iopf_enable = {
-		.size = sizeof(iopf_enable),
+	struct vfio_device_attach_iommufd_pt attach = {
+		.argsz = sizeof(attach),
 		.flags = 0,
-		.dev_id = pcidev_id
 	};
-
-	log_debug("Going to execute IOMMU_FAULT_IOPF_ENABLE");
-	ret = ioctl(__iommufd, IOMMU_FAULT_IOPF_ENABLE, &iopf_enable);
-	if (ret) {
-		log_debug("Error enabling iopf in pciedevice :%d\n", iopf_enable.dev_id);
-		return -1;
-	}
 
 	log_debug("Going to execute IOMMUFD_CMD_FAULT_QUEUE_ALLOC ioctl\n");
 	ret =ioctl(__iommufd, IOMMU_FAULT_QUEUE_ALLOC, &fault);
@@ -140,6 +132,13 @@ get_iopf_capable_ioas(struct iommu_ioas *ioas, int pcidev_id)
 	if (ioctl(__iommufd, IOMMU_HWPT_ALLOC, &fault_cmd)) {
 		log_debug("Error IOMMU_HWPT_ALLOC errno: %d, __iommufd: %d, devid : %d\n",
 			  errno, __iommufd, pcidev_id);
+		return -1;
+	}
+
+	attach.pt_id = fault_cmd.out_hwpt_id;
+	log_debug("Going to run VFIO_DEVICE_ATTACH_IOMMUFD_PT to reattach the new HWPT");
+	if (ioctl(dev_fd, VFIO_DEVICE_ATTACH_IOMMUFD_PT, &attach)) {
+		log_debug("could not re-attach device with ioas\n");
 		return -1;
 	}
 
