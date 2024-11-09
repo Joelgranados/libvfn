@@ -18,7 +18,24 @@
     },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "unstable": "unstable"
+      }
+    },
+    "unstable": {
+      "locked": {
+        "lastModified": 1731136726,
+        "narHash": "sha256-N3kbrHympxKvkYH/gnTQqofeAomx3Du1OkZFAgGwKz4=",
+        "owner": "Joelgranados",
+        "repo": "nixpkgs",
+        "rev": "71907ff4c25ac10e7de6dcd22c7d967146a10f5d",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Joelgranados",
+        "ref": "master",
+        "repo": "nixpkgs",
+        "type": "github"
       }
     }
   },
