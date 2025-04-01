@@ -20,6 +20,10 @@ if config_host.get('HAVE_IOMMU_FAULT_QUEUE_ALLOC', false)
   examples += {'iopf': ['iopf.c']}
 endif
 
+if config_host.get('HAVE_CDQ_IOCTL', false)
+  examples += {'cdq': ['cdq.c']}
+endif
+
 foreach example, sources : examples
   executable(example, [example_sources, sources],
     dependencies: [libnvme],
