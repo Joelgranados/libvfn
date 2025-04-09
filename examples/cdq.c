@@ -16,6 +16,7 @@
  * more details.
  */
 
+#include <stdint.h>
 #include <vfn/support.h>
 #include <sys/ioctl.h>
 #include "ccan/opt/opt.h"
@@ -81,7 +82,16 @@ int main(int argc, char **argv)
 		log_debug("failed on NVME_CDQ_ADM_FLAGS_ALLOC");
 		return -1;
 	}
+	uint16_t cdqid = cdq_cmd.alloc.cdqid;
 
+	memset(&cdq_cmd, 0, sizeof(cdq_cmd));
+	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_TR_SEND;
+	cdq_cmd.tr_send.action = NVME_CDQ_ADM_FLAGS_TR_SEND_START;
+	cdq_cmd.tr_send.cdqid = cdqid;
+	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
+		log_debug("failed on NVME_CDQ_ADM_FLAGS_TR_SEND");
+		return -1;
+	}
 
 	return 0;
 }
