@@ -73,13 +73,15 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	cdq_cmd.cntlid = cntlid;
-	cdq_cmd.entry_nbyte = entry_nbyte;
-	cdq_cmd.entry_nr = entry_nr;
-	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ_ALLOC, &cdq_cmd)) {
-		log_debug("failed on NVME_IOCTL_ADMIN_CDQ_ALLOC");
+	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_ALLOC;
+	cdq_cmd.alloc.entry_nbyte = entry_nbyte;
+	cdq_cmd.alloc.entry_nr = entry_nr;
+	cdq_cmd.alloc.cntlid = cntlid;
+	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
+		log_debug("failed on NVME_CDQ_ADM_FLAGS_ALLOC");
 		return -1;
 	}
+
 
 	return 0;
 }
