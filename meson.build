@@ -77,7 +77,7 @@ config_host.set('HAVE_IOMMU_FAULT_QUEUE_ALLOC',
   description: 'if IOMMU_FAULT_QUEUE_ALLOC is defined in linux/iommufd.h')
 
 config_host.set('HAVE_CDQ_IOCTL',
-  cc.has_header_symbol('linux/nvme_ioctl.h', 'NVME_IOCTL_ADMIN_CDQ_ALLOC',
+  cc.has_header_symbol('linux/nvme_ioctl.h', 'NVME_IOCTL_ADMIN_CDQ',
     include_directories: linux_headers),
   description: 'if nvme_cdq_cmd is defined in linux/nvme_ioctl.h')
 
