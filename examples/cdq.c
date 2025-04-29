@@ -95,11 +95,9 @@ int do_action_start(void)
 
 	int fd;
 	struct nvme_cdq_cmd cdq_cmd = {};
-	uint16_t u16_cdqid = 0;
 
 	if (cdqid == UINT_MAX)
 		opt_usage_exit_fail("missing controller data queue id");
-	u16_cdqid = (uint16_t)cdqid;
 
 	fd = open(parent_cntl, O_RDWR);
 	if (fd < 0) {
@@ -109,7 +107,7 @@ int do_action_start(void)
 
 	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_TR_SEND;
 	cdq_cmd.tr_send.action = NVME_CDQ_ADM_FLAGS_TR_SEND_START;
-	cdq_cmd.tr_send.cdqid = u16_cdqid;
+	cdq_cmd.tr_send.cdqid = (uint16_t)cdqid;
 	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
 		log_debug("failed on NVME_CDQ_ADM_FLAGS_TR_SEND");
 		return -1;
@@ -120,6 +118,25 @@ int do_action_start(void)
 
 int do_action_read(void)
 {
+	int fd;
+	struct nvme_cdq_cmd cdq_cmd = {};
+
+	if (cdqid == UINT_MAX)
+		opt_usage_exit_fail("missing controller data queue id");
+
+	fd = open(parent_cntl, O_RDWR);
+	if (fd < 0) {
+		log_debug("failed to open parent controller device path: %s\n", strerror(errno));
+		return -1;
+	}
+
+	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_KTHREAD;
+	cdq_cmd.get_fd.cdqid = (uint16_t)cdqid;
+	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
+		log_debug("failed on NVME_CDQ_ADM_FLAGS_KTHREAD");
+		return -1;
+	}
+
 	return 0;
 }
 
