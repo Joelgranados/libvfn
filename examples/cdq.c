@@ -45,7 +45,7 @@ static struct opt_table opts[] = {
 			&parent_cntl, "Parent controller device path"),
 	OPT_WITH_ARG("-A|--action",
 			opt_set_charp, opt_show_charp,
-			&action, "Action to perform: alloc, start, read"),
+			&action, "Action to perform: alloc, tr_send_start, read"),
 	OPT_WITH_ARG("--entry-nbyte",
 			opt_set_uintval, opt_show_uintval,
 			&entry_nbyte, "Size in bytes of the CDQ entries"),
@@ -90,7 +90,7 @@ int do_action_alloc(void)
 	return 0;
 }
 
-int do_action_start(void)
+int do_action_trsend(const __u8 action)
 {
 
 	int fd;
@@ -106,7 +106,7 @@ int do_action_start(void)
 	}
 
 	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_TR_SEND;
-	cdq_cmd.tr_send.action = NVME_CDQ_ADM_FLAGS_TR_SEND_START;
+	cdq_cmd.tr_send.action = action;
 	cdq_cmd.tr_send.cdqid = (uint16_t)cdqid;
 	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
 		log_debug("failed on NVME_CDQ_ADM_FLAGS_TR_SEND");
@@ -158,8 +158,8 @@ int main(int argc, char **argv)
 
 	if(streq(action, "alloc")) {
 		return do_action_alloc();
-	} else if (streq(action, "start")) {
-		return do_action_start();
+	} else if (streq(action, "tr_send_start")) {
+		return do_action_trsend(NVME_CDQ_ADM_FLAGS_TR_SEND_START);
 	} else if (streq(action, "read")) {
 		return do_action_read();
 	} else
