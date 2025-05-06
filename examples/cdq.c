@@ -45,7 +45,7 @@ static struct opt_table opts[] = {
 			&parent_cntl, "Parent controller device path"),
 	OPT_WITH_ARG("-A|--action",
 			opt_set_charp, opt_show_charp,
-			&action, "Action to perform: alloc, tr_send_start, read"),
+			&action, "Action to perform: alloc, tr_send_start, kthread"),
 	OPT_WITH_ARG("--entry-nbyte",
 			opt_set_uintval, opt_show_uintval,
 			&entry_nbyte, "Size in bytes of the CDQ entries"),
@@ -116,7 +116,7 @@ int do_action_trsend(const __u8 action)
 	return 0;
 }
 
-int do_action_read(void)
+int do_action_kthread(void)
 {
 	int fd;
 	struct nvme_cdq_cmd cdq_cmd = {};
@@ -131,7 +131,7 @@ int do_action_read(void)
 	}
 
 	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_KTHREAD;
-	cdq_cmd.get_fd.cdqid = (uint16_t)cdqid;
+	cdq_cmd.kthread.cdqid = (uint16_t)cdqid;
 	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
 		log_debug("failed on NVME_CDQ_ADM_FLAGS_KTHREAD");
 		return -1;
@@ -160,8 +160,8 @@ int main(int argc, char **argv)
 		return do_action_alloc();
 	} else if (streq(action, "tr_send_start")) {
 		return do_action_trsend(NVME_CDQ_ADM_FLAGS_TR_SEND_START);
-	} else if (streq(action, "read")) {
-		return do_action_read();
+	} else if (streq(action, "kthread")) {
+		return do_action_kthread();
 	} else
 		opt_usage_exit_fail("incorrect action string %s", action);
 
