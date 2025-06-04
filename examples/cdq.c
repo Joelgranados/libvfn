@@ -45,7 +45,7 @@ static struct opt_table opts[] = {
 			&parent_cntl, "Parent controller device path"),
 	OPT_WITH_ARG("-A|--action",
 			opt_set_charp, opt_show_charp,
-			&action, "Action to perform: alloc, tr_send_start, kthread, readfd"),
+			&action, "Action to perform: alloc, tr_send_start, readfd"),
 	OPT_WITH_ARG("--entry-nbyte",
 			opt_set_uintval, opt_show_uintval,
 			&entry_nbyte, "Size in bytes of the CDQ entries"),
@@ -110,30 +110,6 @@ int do_action_trsend(const __u8 action)
 	cdq_cmd.tr_send.cdqid = (uint16_t)cdqid;
 	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
 		log_debug("failed on NVME_CDQ_ADM_FLAGS_TR_SEND");
-		return -1;
-	}
-
-	return 0;
-}
-
-int do_action_kthread(void)
-{
-	int fd;
-	struct nvme_cdq_cmd cdq_cmd = {};
-
-	if (cdqid == UINT_MAX)
-		opt_usage_exit_fail("missing controller data queue id");
-
-	fd = open(parent_cntl, O_RDWR);
-	if (fd < 0) {
-		log_debug("failed to open parent controller device path: %s\n", strerror(errno));
-		return -1;
-	}
-
-	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_KTHREAD;
-	cdq_cmd.kthread.cdqid = (uint16_t)cdqid;
-	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
-		log_debug("failed on NVME_CDQ_ADM_FLAGS_KTHREAD");
 		return -1;
 	}
 
@@ -247,8 +223,6 @@ int main(int argc, char **argv)
 		return do_action_alloc();
 	} else if (streq(action, "tr_send_start")) {
 		return do_action_trsend(NVME_CDQ_ADM_FLAGS_TR_SEND_START);
-	} else if (streq(action, "kthread")) {
-		return do_action_kthread();
 	} else if (streq(action, "readfd")) {
 		return do_action_readfd();
 	} else
