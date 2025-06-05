@@ -18,12 +18,13 @@
 
 #include <stdint.h>
 #include <vfn/support.h>
+#include <vfn/pci.h>
 #include <sys/ioctl.h>
 #include "ccan/opt/opt.h"
 #include "ccan/str/str.h"
 #include "linux/nvme_ioctl.h"
 
-static char *parent_cntl = "";
+static char *cntl_bdf = "";
 static char *action = "";
 static unsigned int cntlid = 0;
 static unsigned int cdqid = UINT_MAX;
@@ -40,9 +41,6 @@ static struct opt_table opts[] = {
 	OPT_WITH_ARG("--cdq-id",
 			opt_set_uintval, opt_show_uintval,
 			&cdqid, "Controller Data Queue Identifier"),
-	OPT_WITH_ARG("-P|--parent-cntl",
-			opt_set_charp, opt_show_charp,
-			&parent_cntl, "Parent controller device path"),
 	OPT_WITH_ARG("-A|--action",
 			opt_set_charp, opt_show_charp,
 			&action, "Action to perform: alloc, tr_send_start, readfd"),
@@ -55,6 +53,9 @@ static struct opt_table opts[] = {
 	OPT_WITH_ARG("--verbose",
 			opt_set_uintval, opt_show_uintval,
 			&verbose, "Verbosity value"),
+	OPT_WITH_ARG("--cntl-bdf",
+			opt_set_charp, opt_show_charp,
+			&cntl_bdf, "Controller Bus:Device:Func Id"),
 	OPT_ENDTABLE,
 };
 
@@ -62,9 +63,17 @@ int do_action_alloc(void)
 {
 	int fd;
 	struct nvme_cdq_cmd cdq_cmd;
+	__autofree char *parent_cntl = NULL;
+	__autofree char *blk_name = NULL;
 
 	if (entry_nbyte == 0 || entry_nr == 0)
 		opt_usage_exit_fail("--entry-nbyte and --entry-nr need to be >0");
+
+	blk_name = pci_get_nvme_blkname(cntl_bdf);
+	if (!blk_name || asprintf(&parent_cntl, "/dev/%s", blk_name) < 0) {
+		log_debug("could not determine blk name for BDF: %s\n", cntl_bdf);
+		return -1;
+	}
 
 	if (verbose > 0) {
 		fprintf(stderr, "child cntl : %d\n", cntlid);
@@ -95,9 +104,17 @@ int do_action_trsend(const __u8 action)
 
 	int fd;
 	struct nvme_cdq_cmd cdq_cmd = {};
+	__autofree char *parent_cntl = NULL;
+	__autofree char *blk_name = NULL;
 
 	if (cdqid == UINT_MAX)
 		opt_usage_exit_fail("missing controller data queue id");
+
+	blk_name = pci_get_nvme_blkname(cntl_bdf);
+	if (!blk_name || asprintf(&parent_cntl, "/dev/%s", blk_name) < 0) {
+		log_debug("could not determine blk name for BDF: %s\n", cntl_bdf);
+		return -1;
+	}
 
 	fd = open(parent_cntl, O_RDWR);
 	if (fd < 0) {
@@ -152,12 +169,20 @@ int do_action_readfd(void)
 	uint max_retries = 50;
 	size_t buf_size;
 	struct nvme_cdq_cmd cdq_cmd = {};
+	__autofree char *parent_cntl = NULL;
+	__autofree char *blk_name = NULL;
 
 	if (cdqid == UINT_MAX)
 		opt_usage_exit_fail("missing controller data queue id");
 
 	if (entry_nbyte == 0 || entry_nr == 0)
 		opt_usage_exit_fail("--entry-nbyte and --entry-nr need to be >0");
+
+	blk_name = pci_get_nvme_blkname(cntl_bdf);
+	if (!blk_name || asprintf(&parent_cntl, "/dev/%s", blk_name) < 0) {
+		log_debug("could not determine blk name for BDF: %s\n", cntl_bdf);
+		return -1;
+	}
 
 	fd = open(parent_cntl, O_RDWR);
 	if (fd < 0) {
@@ -176,10 +201,10 @@ int do_action_readfd(void)
 	log_debug("File descriptor CDQ: (%d)\n", cdq_fd);
 
 	buf_size = entry_nbyte * entry_nr;
-	buf = malloc(buf_size);
+	buf = zmalloc(buf_size);
 	hexdump(buf, buf_size);
 	if (!buf){
-		log_debug("failed in malloc");
+		log_debug("failed in zmalloc");
 		close(cdq_fd);
 	}
 
@@ -205,13 +230,14 @@ int do_action_readfd(void)
 
 int main(int argc, char **argv)
 {
+
 	opt_register_table(opts, NULL);
 	opt_parse(&argc, argv, opt_log_stderr_exit);
 
 	if (s_usage)
 		opt_usage_and_exit(NULL);
 
-	if (streq(parent_cntl, ""))
+	if (streq(cntl_bdf, ""))
 		opt_usage_exit_fail("missing --parent-cntl (parent controller device path)");
 
 	if (streq(action, ""))
