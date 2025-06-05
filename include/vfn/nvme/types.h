@@ -179,6 +179,22 @@ struct nvme_cmd_rw {
 };
 __static_assert(sizeof(struct nvme_cmd_rw) == 64);
 
+struct nvme_cmd_cdq {
+	uint8_t   opcode;
+	uint8_t   flags;
+	uint16_t  cid;
+	leint32_t rsvd1[5];
+	union nvme_dptr dptr;
+	uint8_t   sel;
+	uint8_t   rsvd10;
+	leint16_t mos;
+	leint16_t cdq_id;
+	leint16_t rsvd;
+	leint32_t cdqsize;
+	leint32_t rsvd13[2];
+};
+__static_assert(sizeof(struct nvme_cmd_cdq) == 64);
+
 /**
  * union nvme_cmd - Generic NVMe command
  * @opcode: Opcode of the command to be executed
@@ -248,6 +264,11 @@ union nvme_cmd {
 	 * @rw: See &struct nvme_cmd_rw
 	 */
 	struct nvme_cmd_rw rw;
+
+	/**
+	 * @cdq: See cdq
+	 */
+	struct nvme_cmd_cdq cdq;
 };
 
 enum nvme_cmd_flags {

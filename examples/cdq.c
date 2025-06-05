@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <vfn/support.h>
 #include <vfn/pci.h>
+#include <vfn/nvme.h>
 #include <sys/ioctl.h>
 #include "ccan/opt/opt.h"
 #include "ccan/str/str.h"
@@ -99,13 +100,18 @@ int do_action_alloc(void)
 	return 0;
 }
 
-int do_action_trsend(const __u8 action)
-{
+#define NVME_ADMIN_TRACK_SEND			0x3d
+#define NVME_CDQ_SEL_LOG_USER_DATA_TRACKSEND	0x0
+#define NVME_CDQ_ADM_FLAGS_TR_SEND_START	0x1
+#define NVME_CDQ_ADM_FLAGS_TR_SEND_STOP		0x0
 
-	int fd;
-	struct nvme_cdq_cmd cdq_cmd = {};
+int do_action_trsend_cmd(const uint16_t action, const uint16_t cdq_id)
+{
+	int fd, ret = 0;
 	__autofree char *parent_cntl = NULL;
 	__autofree char *blk_name = NULL;
+	struct nvme_admin_cmd cmd;
+	struct nvme_cmd_cdq cdq;
 
 	if (cdqid == UINT_MAX)
 		opt_usage_exit_fail("missing controller data queue id");
@@ -116,21 +122,28 @@ int do_action_trsend(const __u8 action)
 		return -1;
 	}
 
+	cdq = (struct nvme_cmd_cdq){
+		.opcode = NVME_ADMIN_TRACK_SEND,
+		.sel = NVME_CDQ_SEL_LOG_USER_DATA_TRACKSEND,
+		.mos = cpu_to_le16(action),
+		.cdq_id = cpu_to_le16(cdq_id)
+	};
+
+	memcpy(&cmd, &cdq, sizeof(cdq));
+
 	fd = open(parent_cntl, O_RDWR);
 	if (fd < 0) {
 		log_debug("failed to open parent controller device path: %s\n", strerror(errno));
 		return -1;
 	}
 
-	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_TR_SEND;
-	cdq_cmd.tr_send.action = action;
-	cdq_cmd.tr_send.cdqid = (uint16_t)cdqid;
-	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
-		log_debug("failed on NVME_CDQ_ADM_FLAGS_TR_SEND");
-		return -1;
+	if (ioctl(fd, NVME_IOCTL_ADMIN_CMD, &cmd)) {
+		log_debug("failed sending the track command");
+		ret = -1;
 	}
 
-	return 0;
+	close(fd);
+	return ret;
 }
 
 void hexdump(const void *data, size_t size) {
@@ -248,7 +261,7 @@ int main(int argc, char **argv)
 	if(streq(action, "alloc")) {
 		return do_action_alloc();
 	} else if (streq(action, "tr_send_start")) {
-		return do_action_trsend(NVME_CDQ_ADM_FLAGS_TR_SEND_START);
+		return do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdqid);
 	} else if (streq(action, "readfd")) {
 		return do_action_readfd();
 	} else
