@@ -231,6 +231,24 @@ out:
 	return path;
 }
 
+static struct dirent *pci_get_first_dentry(DIR *dp, const char* str, const size_t str_size)
+{
+	struct dirent *dentry;
+	do {
+		/* errno may have been left at some non-zero value; reset it. */
+		errno = 0;
+
+		dentry = readdir(dp);
+		if (!dentry)
+			break;
+
+		if (strncmp(str, dentry->d_name, str_size) == 0)
+			break;
+	} while (dentry != NULL);
+
+	return dentry;
+}
+
 char *pci_get_device_vfio_id(const char *bdf)
 {
 	__autofree char *path = NULL;
@@ -249,28 +267,10 @@ char *pci_get_device_vfio_id(const char *bdf)
 		return NULL;
 	}
 
-	do {
-		/*
-		 * If readdir() reaches the end of the directory stream, errno
-		 * is NOT changed. errno may have been left at some non-zero
-		 * value, so reset it.
-		 */
-		errno = 0;
-
-		dentry = readdir(dp);
-		if (!dentry) {
-			if (!errno)
-				errno = EINVAL;
-
-			goto out;
-		}
-
-		if (strncmp("vfio", dentry->d_name, 4) == 0)
-			break;
-	} while (dentry != NULL);
-
+	dentry = pci_get_first_dentry(dp, "vfio", 4);
 	if (dentry == NULL) {
-		errno = EINVAL;
+		if (!errno)
+			errno = EINVAL;
 		goto out;
 	}
 
@@ -280,3 +280,33 @@ out:
 
 	return vfio_id;
 }
+
+char* pci_get_nvme_blkname(const char *bdf) {
+	DIR *d;
+	struct dirent *dentry;
+	char *path, *blkname = NULL;
+
+	if (asprintf(&path, "/sys/bus/pci/devices/%s/nvme", bdf) < 0) {
+		log_debug("asprintf failed\n");
+		return NULL;
+	}
+
+	d = opendir(path);
+	if (!d) {
+		log_debug("could not open %s; is %s an NVME device?\n", path, bdf);
+		return NULL;
+	}
+
+	dentry = pci_get_first_dentry(d, "nvme", 4);
+	if (!dentry) {
+		log_debug("coud not find \"nvmeX\" in %s\n", path);
+		goto out;
+	}
+
+	blkname = strdup(dentry->d_name);
+
+out:
+	log_fatal_if(closedir(d), "closedir");
+	return blkname;
+}
+

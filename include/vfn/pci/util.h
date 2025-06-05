@@ -108,4 +108,14 @@ char *pci_get_iommu_group(const char *bdf);
  */
 char *pci_get_device_vfio_id(const char *bdf);
 
+/**
+ * pci_get_nvme_blkname - Get block name from NVME dev
+ * @bdf: pci device identifier ("bus:device:function")
+ *
+ * Get NVME device name (/dev/%s) of the device identified by @bdf.
+ *
+ * Return: Returns the name without "/dev/", or null if not found
+ */
+char* pci_get_nvme_blkname(const char *bdf);
+
 #endif /* LIBVFN_PCI_UTIL_H */
