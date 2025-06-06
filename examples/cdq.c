@@ -62,7 +62,7 @@ static struct opt_table opts[] = {
 
 int do_action_alloc(void)
 {
-	int fd;
+	int fd, ret = 0;
 	struct nvme_cdq_cmd cdq_cmd;
 	__autofree char *parent_cntl = NULL;
 	__autofree char *blk_name = NULL;
@@ -93,11 +93,15 @@ int do_action_alloc(void)
 	cdq_cmd.alloc.cntlid = cntlid;
 	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
 		log_debug("failed on NVME_CDQ_ADM_FLAGS_ALLOC");
-		return -1;
+		ret = -1;
+		goto out;
 	}
 
 	fprintf(stdout, "%d\n", cdq_cmd.alloc.cdqid);
-	return 0;
+
+out:
+	close(fd);
+	return ret;
 }
 
 #define NVME_ADMIN_TRACK_SEND			0x3d
@@ -177,7 +181,7 @@ void hexdump(const void *data, size_t size) {
 
 int do_action_readfd(void)
 {
-	int ret, fd, cdq_fd;
+	int ret = 0, fd, cdq_fd;
 	void *buf;
 	uint max_retries = 50;
 	size_t buf_size;
@@ -207,19 +211,21 @@ int do_action_readfd(void)
 	cdq_cmd.readfd.cdqid = (uint16_t)cdqid;
 	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
 		log_debug("failed on NVME_IOCTL_ADM_FLASG_READFD");
-		return -1;
+		ret = -1;
+		goto close_fd;
 	}
-
 	cdq_fd = cdq_cmd.readfd.read_fd;
 	log_debug("File descriptor CDQ: (%d)\n", cdq_fd);
 
 	buf_size = entry_nbyte * entry_nr;
 	buf = zmalloc(buf_size);
-	hexdump(buf, buf_size);
 	if (!buf){
 		log_debug("failed in zmalloc");
-		close(cdq_fd);
+		ret = -1;
+		goto close_fd;
 	}
+
+	hexdump(buf, buf_size);
 
 	for (max_retries = UINT_MAX - max_retries; max_retries != 0; ++max_retries)
 	{
@@ -235,10 +241,17 @@ int do_action_readfd(void)
 			continue;
 		} else {
 			hexdump(buf, buf_size);
+			ret = 0;
 		}
 	}
 
-	return 0;
+	free(buf);
+	close(cdq_fd);
+
+close_fd:
+	close(fd);
+
+	return ret;
 }
 
 int main(int argc, char **argv)
