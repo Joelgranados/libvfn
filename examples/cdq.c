@@ -97,7 +97,7 @@ int do_action_alloc(void)
 		goto out;
 	}
 
-	fprintf(stdout, "%d\n", cdq_cmd.alloc.cdqid);
+	fprintf(stdout, "%d\n", cdq_cmd.alloc.cdq_idx);
 
 out:
 	close(fd);
