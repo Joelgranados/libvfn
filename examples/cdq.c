@@ -44,7 +44,7 @@ static struct opt_table opts[] = {
 			&cdqid, "Controller Data Queue Identifier"),
 	OPT_WITH_ARG("-A|--action",
 			opt_set_charp, opt_show_charp,
-			&action, "Action to perform: alloc, tr_send_start, readfd"),
+			&action, "Action to perform: create, tr_send_start, readfd"),
 	OPT_WITH_ARG("--entry-nbyte",
 			opt_set_uintval, opt_show_uintval,
 			&entry_nbyte, "Size in bytes of the CDQ entries"),
@@ -60,7 +60,7 @@ static struct opt_table opts[] = {
 	OPT_ENDTABLE,
 };
 
-int do_action_alloc(void)
+int do_action_create(void)
 {
 	int fd, ret = 0;
 	struct nvme_cdq_cmd cdq_cmd;
@@ -87,17 +87,17 @@ int do_action_alloc(void)
 		return -1;
 	}
 
-	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_ALLOC;
-	cdq_cmd.alloc.entry_nbyte = entry_nbyte;
-	cdq_cmd.alloc.entry_nr = entry_nr;
-	cdq_cmd.alloc.cntlid = cntlid;
+	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_CREATE;
+	cdq_cmd.create.entry_nbyte = entry_nbyte;
+	cdq_cmd.create.entry_nr = entry_nr;
+	cdq_cmd.create.cntlid = cntlid;
 	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
-		log_debug("failed on NVME_CDQ_ADM_FLAGS_ALLOC");
+		log_debug("failed on NVME_CDQ_ADM_FLAGS_CREATE");
 		ret = -1;
 		goto out;
 	}
 
-	fprintf(stdout, "%d\n", cdq_cmd.alloc.cdq_idx);
+	fprintf(stdout, "%d\n", cdq_cmd.create.cdq_id);
 
 out:
 	close(fd);
@@ -271,8 +271,8 @@ int main(int argc, char **argv)
 
 	opt_free_table();
 
-	if(streq(action, "alloc")) {
-		return do_action_alloc();
+	if(streq(action, "create")) {
+		return do_action_create();
 	} else if (streq(action, "tr_send_start")) {
 		return do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdqid);
 	} else if (streq(action, "readfd")) {
