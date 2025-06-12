@@ -44,7 +44,7 @@ static struct opt_table opts[] = {
 			&cdqid, "Controller Data Queue Identifier"),
 	OPT_WITH_ARG("-A|--action",
 			opt_set_charp, opt_show_charp,
-			&action, "Action to perform: create, tr_send_start, readfd"),
+			&action, "Action to perform: create, tr_send_start, delete, readfd"),
 	OPT_WITH_ARG("--entry-nbyte",
 			opt_set_uintval, opt_show_uintval,
 			&entry_nbyte, "Size in bytes of the CDQ entries"),
@@ -60,48 +60,83 @@ static struct opt_table opts[] = {
 	OPT_ENDTABLE,
 };
 
-int do_action_create(void)
+int get_bdf_fd(const char *bdf)
 {
-	int fd, ret = 0;
-	struct nvme_cdq_cmd cdq_cmd;
-	__autofree char *parent_cntl = NULL;
+	int fd;
+	__autofree char *cntl = NULL;
 	__autofree char *blk_name = NULL;
 
-	if (entry_nbyte == 0 || entry_nr == 0)
-		opt_usage_exit_fail("--entry-nbyte and --entry-nr need to be >0");
-
-	blk_name = pci_get_nvme_blkname(cntl_bdf);
-	if (!blk_name || asprintf(&parent_cntl, "/dev/%s", blk_name) < 0) {
-		log_debug("could not determine blk name for BDF: %s\n", cntl_bdf);
+	blk_name = pci_get_nvme_blkname(bdf);
+	if (!blk_name || asprintf(&cntl, "/dev/%s", blk_name) < 0) {
+		log_debug("could not determine blk name for BDF: %s\n", bdf);
 		return -1;
 	}
 
-	if (verbose > 0) {
-		fprintf(stderr, "child cntl : %d\n", cntlid);
-		fprintf(stderr, "parent path : %s\n", parent_cntl);
-	}
-
-	fd = open(parent_cntl, O_RDWR);
+	fd = open(cntl, O_RDWR);
 	if (fd < 0) {
 		log_debug("failed to open parent controller device path: %s\n", strerror(errno));
 		return -1;
 	}
 
+	if (verbose > 0) {
+		fprintf(stderr, "parent path : %s\n", cntl);
+	}
+
+
+	return fd;
+}
+
+int do_action_create(void)
+{
+	int fd, ret = 0;
+	struct nvme_cdq_cmd cdq_cmd;
+
+	if (entry_nbyte == 0 || entry_nr == 0)
+		opt_usage_exit_fail("--entry-nbyte and --entry-nr need to be >0");
+
+	if (verbose > 0)
+		fprintf(stderr, "child cntl : %d\n", cntlid);
+
+	fd = get_bdf_fd(cntl_bdf);
+	if (fd < 0)
+		return -1;
+
 	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_CREATE;
-	cdq_cmd.create.entry_nbyte = entry_nbyte;
-	cdq_cmd.create.entry_nr = entry_nr;
-	cdq_cmd.create.cntlid = cntlid;
+	cdq_cmd.adm.entry_nbyte = entry_nbyte;
+	cdq_cmd.adm.entry_nr = entry_nr;
+	cdq_cmd.adm.cntlid = cntlid;
 	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
 		log_debug("failed on NVME_CDQ_ADM_FLAGS_CREATE");
 		ret = -1;
 		goto out;
 	}
 
-	fprintf(stdout, "%d\n", cdq_cmd.create.cdq_id);
+	fprintf(stdout, "%d\n", cdq_cmd.adm.cdq_id);
 
 out:
 	close(fd);
 	return ret;
+}
+
+int do_action_delete(const uint16_t cdq_id)
+{
+	int fd;
+	struct nvme_cdq_cmd cdq_cmd;
+
+	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_DELETE;
+	cdq_cmd.adm.cdq_id = cdq_id;
+
+	fd = get_bdf_fd(cntl_bdf);
+	if (fd < 0)
+		return -1;
+
+
+	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
+		log_debug("failed on NVME_CDQ_ADM_FLAGS_DELETE");
+		return -1;
+	}
+
+	return 0;
 }
 
 #define NVME_ADMIN_TRACK_SEND			0x3d
@@ -112,19 +147,11 @@ out:
 int do_action_trsend_cmd(const uint16_t action, const uint16_t cdq_id)
 {
 	int fd, ret = 0;
-	__autofree char *parent_cntl = NULL;
-	__autofree char *blk_name = NULL;
 	struct nvme_admin_cmd cmd;
 	struct nvme_cmd_cdq cdq;
 
 	if (cdqid == UINT_MAX)
 		opt_usage_exit_fail("missing controller data queue id");
-
-	blk_name = pci_get_nvme_blkname(cntl_bdf);
-	if (!blk_name || asprintf(&parent_cntl, "/dev/%s", blk_name) < 0) {
-		log_debug("could not determine blk name for BDF: %s\n", cntl_bdf);
-		return -1;
-	}
 
 	cdq = (struct nvme_cmd_cdq){
 		.opcode = NVME_ADMIN_TRACK_SEND,
@@ -135,11 +162,9 @@ int do_action_trsend_cmd(const uint16_t action, const uint16_t cdq_id)
 
 	memcpy(&cmd, &cdq, sizeof(cdq));
 
-	fd = open(parent_cntl, O_RDWR);
-	if (fd < 0) {
-		log_debug("failed to open parent controller device path: %s\n", strerror(errno));
+	fd = get_bdf_fd(cntl_bdf);
+	if (fd < 0)
 		return -1;
-	}
 
 	if (ioctl(fd, NVME_IOCTL_ADMIN_CMD, &cmd)) {
 		log_debug("failed sending the track command");
@@ -186,8 +211,6 @@ int do_action_readfd(void)
 	uint max_retries = 50;
 	size_t buf_size;
 	struct nvme_cdq_cmd cdq_cmd = {};
-	__autofree char *parent_cntl = NULL;
-	__autofree char *blk_name = NULL;
 
 	if (cdqid == UINT_MAX)
 		opt_usage_exit_fail("missing controller data queue id");
@@ -195,17 +218,9 @@ int do_action_readfd(void)
 	if (entry_nbyte == 0 || entry_nr == 0)
 		opt_usage_exit_fail("--entry-nbyte and --entry-nr need to be >0");
 
-	blk_name = pci_get_nvme_blkname(cntl_bdf);
-	if (!blk_name || asprintf(&parent_cntl, "/dev/%s", blk_name) < 0) {
-		log_debug("could not determine blk name for BDF: %s\n", cntl_bdf);
+	fd = get_bdf_fd(cntl_bdf);
+	if (fd < 0)
 		return -1;
-	}
-
-	fd = open(parent_cntl, O_RDWR);
-	if (fd < 0) {
-		log_debug("failed to open parent controller device path: %s\n", strerror(errno));
-		return -1;
-	}
 
 	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_READFD;
 	cdq_cmd.readfd.cdqid = (uint16_t)cdqid;
@@ -273,6 +288,8 @@ int main(int argc, char **argv)
 
 	if(streq(action, "create")) {
 		return do_action_create();
+	} else if (streq(action, "delete")) {
+		return do_action_delete(cdqid);
 	} else if (streq(action, "tr_send_start")) {
 		return do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdqid);
 	} else if (streq(action, "readfd")) {
