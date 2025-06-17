@@ -86,6 +86,7 @@ int get_bdf_fd(const char *bdf)
 	return fd;
 }
 
+#define NVME_CDQ_MOS_CREATE_QT_UDMQ	0x0
 int do_action_create(void)
 {
 	int fd, ret = 0;
@@ -104,7 +105,8 @@ int do_action_create(void)
 	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_CREATE;
 	cdq_cmd.adm.entry_nbyte = entry_nbyte;
 	cdq_cmd.adm.entry_nr = entry_nr;
-	cdq_cmd.adm.cntlid = cntlid;
+	cdq_cmd.adm.cqs = cntlid;
+	cdq_cmd.adm.mos = NVME_CDQ_MOS_CREATE_QT_UDMQ;
 	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
 		log_debug("failed on NVME_CDQ_ADM_FLAGS_CREATE");
 		ret = -1;
