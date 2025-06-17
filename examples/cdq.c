@@ -107,6 +107,11 @@ int do_action_create(void)
 	cdq_cmd.adm.entry_nr = entry_nr;
 	cdq_cmd.adm.cqs = cntlid;
 	cdq_cmd.adm.mos = NVME_CDQ_MOS_CREATE_QT_UDMQ;
+
+	// Guess that its in the last bit
+	cdq_cmd.adm.cdqp_offset = entry_nbyte;
+	cdq_cmd.adm.cdqp_mask = 0x1;
+
 	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
 		log_debug("failed on NVME_CDQ_ADM_FLAGS_CREATE");
 		ret = -1;
