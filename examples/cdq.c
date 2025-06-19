@@ -27,7 +27,7 @@
 
 static char *cntl_bdf = "";
 static char *action = "";
-static unsigned int cntlid = 0;
+static unsigned int cntlid = UINT_MAX;
 static unsigned int cdqid = UINT_MAX;
 static unsigned int entry_nbyte = 0;
 static unsigned int entry_nr = 0;
@@ -42,23 +42,52 @@ static struct opt_table opts[] = {
 	OPT_WITH_ARG("--cdq-id",
 			opt_set_uintval, opt_show_uintval,
 			&cdqid, "Controller Data Queue Identifier"),
-	OPT_WITH_ARG("-A|--action",
-			opt_set_charp, opt_show_charp,
-			&action, "Action to perform: create, tr_send_start, delete, readfd"),
 	OPT_WITH_ARG("--entry-nbyte",
 			opt_set_uintval, opt_show_uintval,
 			&entry_nbyte, "Size in bytes of the CDQ entries"),
 	OPT_WITH_ARG("--entry-nr",
 			opt_set_uintval, opt_show_uintval,
 			&entry_nr, "Number of entries in CDQ"),
-	OPT_WITH_ARG("--verbose",
-			opt_set_uintval, opt_show_uintval,
-			&verbose, "Verbosity value"),
 	OPT_WITH_ARG("--cntl-bdf",
 			opt_set_charp, opt_show_charp,
 			&cntl_bdf, "Controller Bus:Device:Func Id"),
+	OPT_WITH_ARG("-A|--action",
+			opt_set_charp, opt_show_charp,
+			&action, "Action to perform: create{&read}, tr_send_start, delete"),
+	OPT_WITH_ARG("--verbose",
+			opt_set_uintval, opt_show_uintval,
+			&verbose, "Verbosity value"),
 	OPT_ENDTABLE,
 };
+
+void hexdump(const void *data, size_t size) {
+	const unsigned char *byte = (const unsigned char *)data;
+	size_t i, j;
+
+	for (i = 0; i < size; i += 16) {
+		fprintf(stderr, "%08zx  ", i);  // Offset
+
+		// Hex bytes
+		for (j = 0; j < 16; ++j) {
+			if (i + j < size)
+				fprintf(stderr, "%02x ", byte[i + j]);
+			else
+				fprintf(stderr, "   ");
+		}
+
+		fprintf(stderr, " ");
+
+		// ASCII chars
+		for (j = 0; j < 16; ++j) {
+			if (i + j < size) {
+				unsigned char c = byte[i + j];
+				fprintf(stderr, "%c", isprint(c) ? c : '.');
+			}
+		}
+
+		fprintf(stderr, "\n");
+	}
+}
 
 int get_bdf_fd(const char *bdf)
 {
@@ -87,13 +116,16 @@ int get_bdf_fd(const char *bdf)
 }
 
 #define NVME_CDQ_MOS_CREATE_QT_UDMQ	0x0
-int do_action_create(void)
+int do_action_create(uint16_t *cdqid, int *readfd)
 {
 	int fd, ret = 0;
 	struct nvme_cdq_cmd cdq_cmd;
 
 	if (entry_nbyte == 0 || entry_nr == 0)
 		opt_usage_exit_fail("--entry-nbyte and --entry-nr need to be >0");
+
+	if (cntlid == UINT_MAX)
+		opt_usage_exit_fail("missing controller id");
 
 	if (verbose > 0)
 		fprintf(stderr, "child cntl : %d\n", cntlid);
@@ -118,7 +150,8 @@ int do_action_create(void)
 		goto out;
 	}
 
-	fprintf(stdout, "%d\n", cdq_cmd.adm.cdq_id);
+	*cdqid = cdq_cmd.adm.cdq_id;
+	*readfd = cdq_cmd.adm.read_fd;
 
 out:
 	close(fd);
@@ -157,9 +190,6 @@ int do_action_trsend_cmd(const uint16_t action, const uint16_t cdq_id)
 	struct nvme_admin_cmd cmd;
 	struct nvme_cmd_cdq cdq;
 
-	if (cdqid == UINT_MAX)
-		opt_usage_exit_fail("missing controller data queue id");
-
 	cdq = (struct nvme_cmd_cdq){
 		.opcode = NVME_ADMIN_TRACK_SEND,
 		.sel = NVME_CDQ_SEL_LOG_USER_DATA_TRACKSEND,
@@ -182,69 +212,23 @@ int do_action_trsend_cmd(const uint16_t action, const uint16_t cdq_id)
 	return ret;
 }
 
-void hexdump(const void *data, size_t size) {
-    const unsigned char *byte = (const unsigned char *)data;
-    size_t i, j;
-
-    for (i = 0; i < size; i += 16) {
-        printf("%08zx  ", i);  // Offset
-
-        // Hex bytes
-        for (j = 0; j < 16; ++j) {
-            if (i + j < size)
-                printf("%02x ", byte[i + j]);
-            else
-                printf("   ");
-        }
-
-        printf(" ");
-
-        // ASCII chars
-        for (j = 0; j < 16; ++j) {
-            if (i + j < size) {
-                unsigned char c = byte[i + j];
-                printf("%c", isprint(c) ? c : '.');
-            }
-        }
-
-        printf("\n");
-    }
-}
-
-int do_action_readfd(void)
+int do_action_readfd(const int readfd)
 {
-	int ret = 0, fd, cdq_fd;
+	int ret = 0;
 	void *buf;
-	uint max_retries = 50;
+	uint max_retries = 10;
 	size_t buf_size;
-	struct nvme_cdq_cmd cdq_cmd = {};
-
-	if (cdqid == UINT_MAX)
-		opt_usage_exit_fail("missing controller data queue id");
 
 	if (entry_nbyte == 0 || entry_nr == 0)
 		opt_usage_exit_fail("--entry-nbyte and --entry-nr need to be >0");
 
-	fd = get_bdf_fd(cntl_bdf);
-	if (fd < 0)
-		return -1;
-
-	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_READFD;
-	cdq_cmd.readfd.cdqid = (uint16_t)cdqid;
-	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
-		log_debug("failed on NVME_IOCTL_ADM_FLASG_READFD");
-		ret = -1;
-		goto close_fd;
-	}
-	cdq_fd = cdq_cmd.readfd.read_fd;
-	log_debug("File descriptor CDQ: (%d)\n", cdq_fd);
+	log_debug("File descriptor CDQ: (%d)\n", readfd);
 
 	buf_size = entry_nbyte * entry_nr;
 	buf = zmalloc(buf_size);
 	if (!buf){
 		log_debug("failed in zmalloc");
-		ret = -1;
-		goto close_fd;
+		return -1;
 	}
 
 	hexdump(buf, buf_size);
@@ -252,14 +236,15 @@ int do_action_readfd(void)
 	for (max_retries = UINT_MAX - max_retries; max_retries != 0; ++max_retries)
 	{
 		sleep(1);
-		log_debug("Reading on %d for %ld\n", cdq_fd, buf_size);
-		ret = read(cdq_fd, buf, buf_size);
+		log_debug("Reading on %d for %ld\n", readfd, buf_size);
+		ret = read(readfd, buf, buf_size);
 		if (ret < 0) {
 			log_debug("failed on entries read");
-			return -1;
+			goto free_buf;
 		}
 		if (ret == 0) {
-			log_debug("read returned 0... try again, try number %d\n", UINT_MAX - max_retries);
+			log_debug("read returned 0... try again, try number %d\n",
+				  UINT_MAX - max_retries);
 			continue;
 		} else {
 			hexdump(buf, buf_size);
@@ -267,18 +252,15 @@ int do_action_readfd(void)
 		}
 	}
 
+free_buf:
 	free(buf);
-	close(cdq_fd);
-
-close_fd:
-	close(fd);
-
 	return ret;
 }
 
 int main(int argc, char **argv)
 {
-
+	pid_t pid;
+	int readfd, ret;
 	opt_register_table(opts, NULL);
 	opt_parse(&argc, argv, opt_log_stderr_exit);
 
@@ -293,16 +275,39 @@ int main(int argc, char **argv)
 
 	opt_free_table();
 
-	if(streq(action, "create")) {
-		return do_action_create();
+	if (strncmp(action, "create", 6) == 0) {
+		uint16_t create_cdqid;
+		ret = do_action_create(&create_cdqid, &readfd);
+		if (ret)
+			return ret;
+
+		if (streq(action, "create&read")) {
+			pid = fork();
+
+			if (pid < 0) {
+				log_debug("failed to fork a read");
+				return -1;
+			} else if (pid == 0) {
+				setsid();
+				do_action_readfd(readfd);
+				goto out;
+			}
+		}
+
+		fprintf(stdout, "%d\n", create_cdqid);
+		fflush(stdout);
+		goto out;
+	}
+
+	if (cdqid == UINT_MAX)
+		opt_usage_exit_fail("missing controller data queue id");
+
+	if (streq(action, "tr_send_start")) {
+		return do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdqid);
 	} else if (streq(action, "delete")) {
 		return do_action_delete(cdqid);
-	} else if (streq(action, "tr_send_start")) {
-		return do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdqid);
-	} else if (streq(action, "readfd")) {
-		return do_action_readfd();
-	} else
-		opt_usage_exit_fail("incorrect action string %s", action);
+	}
 
-	return 0;
+out:
+	exit(0);
 }
