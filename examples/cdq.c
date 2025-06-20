@@ -135,14 +135,14 @@ int do_action_create(uint16_t *cdqid, int *readfd)
 		return -1;
 
 	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_CREATE;
-	cdq_cmd.adm.entry_nbyte = entry_nbyte;
-	cdq_cmd.adm.entry_nr = entry_nr;
-	cdq_cmd.adm.cqs = cntlid;
-	cdq_cmd.adm.mos = NVME_CDQ_MOS_CREATE_QT_UDMQ;
+	cdq_cmd.entry_nbyte = entry_nbyte;
+	cdq_cmd.entry_nr = entry_nr;
+	cdq_cmd.cqs = cntlid;
+	cdq_cmd.mos = NVME_CDQ_MOS_CREATE_QT_UDMQ;
 
 	// Guess that its in the last bit
-	cdq_cmd.adm.cdqp_offset = entry_nbyte;
-	cdq_cmd.adm.cdqp_mask = 0x1;
+	cdq_cmd.cdqp_offset = entry_nbyte;
+	cdq_cmd.cdqp_mask = 0x1;
 
 	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
 		log_debug("failed on NVME_CDQ_ADM_FLAGS_CREATE");
@@ -150,8 +150,8 @@ int do_action_create(uint16_t *cdqid, int *readfd)
 		goto out;
 	}
 
-	*cdqid = cdq_cmd.adm.cdq_id;
-	*readfd = cdq_cmd.adm.read_fd;
+	*cdqid = cdq_cmd.cdq_id;
+	*readfd = cdq_cmd.read_fd;
 
 out:
 	close(fd);
@@ -164,7 +164,7 @@ int do_action_delete(const uint16_t cdq_id)
 	struct nvme_cdq_cmd cdq_cmd;
 
 	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_DELETE;
-	cdq_cmd.adm.cdq_id = cdq_id;
+	cdq_cmd.cdq_id = cdq_id;
 
 	fd = get_bdf_fd(cntl_bdf);
 	if (fd < 0)
