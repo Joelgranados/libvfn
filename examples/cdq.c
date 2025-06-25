@@ -104,7 +104,6 @@ int do_action_create(int cntl_fd, uint cntlid, uint16_t *cdqid, int *readfd)
 	if (verbose > 0)
 		fprintf(stderr, "child cntl : %d\n", cntlid);
 
-	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_CREATE;
 	cdq_cmd.entry_nbyte = entry_nbyte;
 	cdq_cmd.entry_nr = entry_nr;
 	cdq_cmd.cqs = cntlid;
@@ -125,27 +124,6 @@ int do_action_create(int cntl_fd, uint cntlid, uint16_t *cdqid, int *readfd)
 
 out:
 	return ret;
-}
-
-int do_action_delete(const uint16_t cdq_id)
-{
-	int fd;
-	struct nvme_cdq_cmd cdq_cmd;
-
-	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_DELETE;
-	cdq_cmd.cdq_id = cdq_id;
-
-	fd = get_bdf_fd(cntl_bdf);
-	if (fd < 0)
-		return -1;
-
-
-	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
-		log_debug("failed on NVME_CDQ_ADM_FLAGS_DELETE");
-		return -1;
-	}
-
-	return 0;
 }
 
 #define NVME_ADMIN_TRACK_SEND			0x3d
@@ -261,9 +239,8 @@ void t0(int cntl_fd)
 	if (!WIFEXITED(ret))
 		log_error("read fd child exited erroneously\n");
 
-	ret = do_action_delete(cdq_id);
-	if (ret)
-		log_error("do_action_delete exited erroneously\n");
+	if (close(cdq_fd))
+		log_error("Could not close exit the cdq fd properly\n");
 }
 
 void t1(int cntl_fd)
@@ -290,9 +267,8 @@ void t1(int cntl_fd)
 		return;
 	}
 
-	ret = do_action_delete(cdq_id1);
-	if (ret) {
-		log_error("do_action_delete on cdq_id: %d exited erroneously\n", cdq_id1);
+	if (close(cdq_fd1)) {
+		log_error("close cdq on cdq_id: %d exited erroneously\n", cdq_id1);
 		return;
 	}
 
@@ -318,9 +294,8 @@ void t1(int cntl_fd)
 	if (!WIFEXITED(ret))
 		log_error("read fd child exited erroneously\n");
 
-	ret = do_action_delete(cdq_id2);
-	if (ret) 
-		log_error("do_action_delete exited erroneously\n");
+	if (close(cdq_fd2))
+		log_error("close cdq on cdq_id: %d exited erroneously\n", cdq_id2);
 
 }
 
