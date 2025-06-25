@@ -21,44 +21,24 @@
 #include <vfn/pci.h>
 #include <vfn/nvme.h>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 #include "ccan/opt/opt.h"
 #include "ccan/str/str.h"
 #include "linux/nvme_ioctl.h"
+#include "stdlib.h"
+#include "vfn/support/log.h"
 
 static char *cntl_bdf = "";
-static char *action = "";
-static unsigned int cntlid = UINT_MAX;
-static unsigned int cdqid = UINT_MAX;
-static unsigned int entry_nbyte = 0;
-static unsigned int entry_nr = 0;
-static unsigned int verbose = 0;
+static uint test_num[255];
+static size_t test_num_count = 0;
+static uint cntlids[255];
+static size_t cntlids_count = 0;
+static uint entry_nbyte = 0;
+static uint entry_nr = 0;
+static uint verbose = 0;
 bool s_usage;
 
-static struct opt_table opts[] = {
-	OPT_WITHOUT_ARG("-h|--help", opt_set_bool, &s_usage, "show usage"),
-	OPT_WITH_ARG("-C|--child-cntl",
-			opt_set_uintval, opt_show_uintval,
-			&cntlid, "Child controller ID"),
-	OPT_WITH_ARG("--cdq-id",
-			opt_set_uintval, opt_show_uintval,
-			&cdqid, "Controller Data Queue Identifier"),
-	OPT_WITH_ARG("--entry-nbyte",
-			opt_set_uintval, opt_show_uintval,
-			&entry_nbyte, "Size in bytes of the CDQ entries"),
-	OPT_WITH_ARG("--entry-nr",
-			opt_set_uintval, opt_show_uintval,
-			&entry_nr, "Number of entries in CDQ"),
-	OPT_WITH_ARG("--cntl-bdf",
-			opt_set_charp, opt_show_charp,
-			&cntl_bdf, "Controller Bus:Device:Func Id"),
-	OPT_WITH_ARG("-A|--action",
-			opt_set_charp, opt_show_charp,
-			&action, "Action to perform: create{&read}, tr_send_start, delete"),
-	OPT_WITH_ARG("--verbose",
-			opt_set_uintval, opt_show_uintval,
-			&verbose, "Verbosity value"),
-	OPT_ENDTABLE,
-};
+#define MAX_TEST_NUM	2
 
 void hexdump(const void *data, size_t size) {
 	const unsigned char *byte = (const unsigned char *)data;
@@ -116,23 +96,13 @@ int get_bdf_fd(const char *bdf)
 }
 
 #define NVME_CDQ_MOS_CREATE_QT_UDMQ	0x0
-int do_action_create(uint16_t *cdqid, int *readfd)
+int do_action_create(int cntl_fd, uint cntlid, uint16_t *cdqid, int *readfd)
 {
-	int fd, ret = 0;
+	int ret = 0;
 	struct nvme_cdq_cmd cdq_cmd;
-
-	if (entry_nbyte == 0 || entry_nr == 0)
-		opt_usage_exit_fail("--entry-nbyte and --entry-nr need to be >0");
-
-	if (cntlid == UINT_MAX)
-		opt_usage_exit_fail("missing controller id");
 
 	if (verbose > 0)
 		fprintf(stderr, "child cntl : %d\n", cntlid);
-
-	fd = get_bdf_fd(cntl_bdf);
-	if (fd < 0)
-		return -1;
 
 	cdq_cmd.flags = NVME_CDQ_ADM_FLAGS_CREATE;
 	cdq_cmd.entry_nbyte = entry_nbyte;
@@ -144,7 +114,7 @@ int do_action_create(uint16_t *cdqid, int *readfd)
 	cdq_cmd.cdqp_offset = entry_nbyte;
 	cdq_cmd.cdqp_mask = 0x1;
 
-	if (ioctl(fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
+	if (ioctl(cntl_fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
 		log_debug("failed on NVME_CDQ_ADM_FLAGS_CREATE");
 		ret = -1;
 		goto out;
@@ -154,7 +124,6 @@ int do_action_create(uint16_t *cdqid, int *readfd)
 	*readfd = cdq_cmd.read_fd;
 
 out:
-	close(fd);
 	return ret;
 }
 
@@ -212,11 +181,10 @@ int do_action_trsend_cmd(const uint16_t action, const uint16_t cdq_id)
 	return ret;
 }
 
-int do_action_readfd(const int readfd)
+int do_action_readfd(const int readfd, uint max_retries)
 {
 	int ret = 0;
 	void *buf;
-	uint max_retries = 10;
 	size_t buf_size;
 
 	if (entry_nbyte == 0 || entry_nr == 0)
@@ -257,11 +225,153 @@ free_buf:
 	return ret;
 }
 
-int main(int argc, char **argv)
+void t0(int cntl_fd)
 {
 	pid_t pid;
-	int readfd, ret;
+	int ret, cdq_fd;
+	uint16_t cdq_id;
+
+	log_debug("Executing test 0\n");
+
+	ret = do_action_create(cntl_fd, cntlids[0], &cdq_id, &cdq_fd);
+	if (ret) {
+		log_error("Failed to create cdq on %d\n", cntl_fd);
+		return;
+	}
+
+	pid = fork();
+
+	if (pid < 0) {
+		log_error("failed to fork a read");
+		return;
+	} else if (pid == 0) {
+		setsid();
+		do_action_readfd(cdq_fd, 10);
+		exit(0);
+	}
+
+	ret = do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id);
+	if (ret) {
+		log_error("do_action_trsend_cmd exited erroneously\n");
+		return;
+	}
+
+	wait(&ret);
+
+	if (!WIFEXITED(ret))
+		log_error("read fd child exited erroneously\n");
+
+	ret = do_action_delete(cdq_id);
+	if (ret)
+		log_error("do_action_delete exited erroneously\n");
+}
+
+void t1(int cntl_fd)
+{
+	pid_t pid;
+	uint16_t cdq_id1, cdq_id2;
+	int cdq_fd1, cdq_fd2, ret;
+
+	log_debug("Executing test 1\n");
+	if (cntlids_count < 2) {
+		log_error("Too few cntlids for t1\n");
+		return;
+	}
+
+	ret = do_action_create(cntl_fd, cntlids[0], &cdq_id1, &cdq_fd1);
+	if (ret) {
+		log_error("Failed to create cdq1 on %d\n", cntl_fd);
+		return;
+	}
+
+	ret = do_action_create(cntl_fd, cntlids[1], &cdq_id2, &cdq_fd2);
+	if (ret) {
+		log_error("Failed to create cdq2 on %d\n", cntl_fd);
+		return;
+	}
+
+	ret = do_action_delete(cdq_id1);
+	if (ret) {
+		log_error("do_action_delete on cdq_id: %d exited erroneously\n", cdq_id1);
+		return;
+	}
+
+	pid = fork();
+
+	if (pid < 0) {
+		log_error("failed to fork a read");
+		return;
+	} else if (pid == 0) {
+		setsid();
+		do_action_readfd(cdq_fd2, 10);
+		exit(0);
+	}
+
+	ret = do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id2);
+	if (ret) {
+		log_debug("do_action_trsend_cmd exited erroneously\n");
+		return;
+	}
+
+	wait(&ret);
+
+	if (!WIFEXITED(ret))
+		log_error("read fd child exited erroneously\n");
+
+	ret = do_action_delete(cdq_id2);
+	if (ret) 
+		log_error("do_action_delete exited erroneously\n");
+
+}
+
+void (*test_funcs[MAX_TEST_NUM])(int)
+	= {t0, t1};
+
+static char *collect_test_num(const char *optarg, __attribute__((__unused__)) void *unused)
+{
+	uint t;
+	char *ret = opt_set_uintval(optarg, &t);
+	if (ret != NULL)
+		return ret;
+
+	test_num[test_num_count++] = t;
+	return NULL;
+}
+
+static char *collect_cntlid(const char *optarg, __attribute__((__unused__)) void *unused)
+{
+	uint t;
+	char *ret = opt_set_uintval(optarg, &t);
+	if (ret != NULL)
+		return ret;
+
+	cntlids[cntlids_count++] = t;
+	return NULL;
+}
+
+static struct opt_table opts[] = {
+	OPT_WITHOUT_ARG("-h|--help", opt_set_bool, &s_usage, "show usage"),
+	OPT_WITH_ARG("--entry-nbyte",
+			opt_set_uintval, opt_show_uintval,
+			&entry_nbyte, "Size in bytes of the CDQ entries"),
+	OPT_WITH_ARG("--entry-nr",
+			opt_set_uintval, opt_show_uintval,
+			&entry_nr, "Number of entries in CDQ"),
+	OPT_WITH_ARG("--cntl-bdf",
+			opt_set_charp, opt_show_charp,
+			&cntl_bdf, "Controller Bus:Device:Func Id"),
+	OPT_WITH_ARG("--verbose",
+			opt_set_uintval, opt_show_uintval,
+			&verbose, "Verbosity value"),
+	OPT_ENDTABLE,
+};
+
+int main(int argc, char **argv)
+{
+	int cntl_fd;
 	opt_register_table(opts, NULL);
+	opt_register_arg("--test-num", collect_test_num, NULL, NULL, "");
+	opt_register_arg("--child-cntl", collect_cntlid, NULL, NULL, "");
 	opt_parse(&argc, argv, opt_log_stderr_exit);
 
 	if (s_usage)
@@ -269,45 +379,29 @@ int main(int argc, char **argv)
 
 	if (streq(cntl_bdf, ""))
 		opt_usage_exit_fail("missing --parent-cntl (parent controller device path)");
-
-	if (streq(action, ""))
-		opt_usage_exit_fail("missing --action");
+	if (test_num_count == 0)
+		opt_usage_exit_fail("must pass --test-num [0,%d) at least once", MAX_TEST_NUM);
+	if (entry_nbyte == 0 || entry_nr == 0)
+		opt_usage_exit_fail("--entry-nbyte and --entry-nr need to be >0");
+	if (cntlids_count == 0)
+		opt_usage_exit_fail("must pass at least one --child-cntl");
 
 	opt_free_table();
 
-	if (strncmp(action, "create", 6) == 0) {
-		uint16_t create_cdqid;
-		ret = do_action_create(&create_cdqid, &readfd);
-		if (ret)
-			return ret;
+	cntl_fd = get_bdf_fd(cntl_bdf);
+	if (cntl_fd < 0) {
+		errno = -EPERM;
+		log_fatal("Error getting fd for %s\n", cntl_bdf);
+	}
 
-		if (streq(action, "create&read")) {
-			pid = fork();
-
-			if (pid < 0) {
-				log_debug("failed to fork a read");
-				return -1;
-			} else if (pid == 0) {
-				setsid();
-				do_action_readfd(readfd);
-				goto out;
-			}
+	for(size_t i = 0; i < test_num_count; ++i) {
+		if (test_num[i] >= MAX_TEST_NUM) {
+			errno = -EINVAL;
+			log_fatal("Unknown test number: %d", test_num[i]);
 		}
 
-		fprintf(stdout, "%d\n", create_cdqid);
-		fflush(stdout);
-		goto out;
+		test_funcs[test_num[i]](cntl_fd);
 	}
 
-	if (cdqid == UINT_MAX)
-		opt_usage_exit_fail("missing controller data queue id");
-
-	if (streq(action, "tr_send_start")) {
-		return do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdqid);
-	} else if (streq(action, "delete")) {
-		return do_action_delete(cdqid);
-	}
-
-out:
 	exit(0);
 }
