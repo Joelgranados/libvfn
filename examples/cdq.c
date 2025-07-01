@@ -36,6 +36,7 @@ static size_t cntlids_count = 0;
 static uint entry_nbyte = 0;
 static uint entry_nr = 0;
 static uint verbose = 0;
+static uint max_retries = 10;
 bool s_usage;
 
 #define MAX_TEST_NUM	2
@@ -45,6 +46,15 @@ void hexdump(const void *data, size_t size) {
 	size_t i, j;
 
 	for (i = 0; i < size; i += 16) {
+		for (j = 0; j < 16; ++j) {
+			if (i + j < size) {
+				if (byte[i + j] != 0)
+					break;
+			}
+		}
+		if (j == 16)
+			continue;
+
 		fprintf(stderr, "%08zx  ", i);  // Offset
 
 		// Hex bytes
@@ -159,9 +169,9 @@ int do_action_trsend_cmd(const uint16_t action, const uint16_t cdq_id)
 	return ret;
 }
 
-int do_action_readfd(const int readfd, uint max_retries)
+int do_action_readfd(const int readfd, uint rep_count)
 {
-	int ret = 0;
+	int ret = 0, read_accum = 0;
 	void *buf;
 	size_t buf_size;
 
@@ -179,7 +189,7 @@ int do_action_readfd(const int readfd, uint max_retries)
 
 	hexdump(buf, buf_size);
 
-	for (max_retries = UINT_MAX - max_retries; max_retries != 0; ++max_retries)
+	for (rep_count = UINT_MAX - rep_count; rep_count != 0; ++rep_count)
 	{
 		sleep(1);
 		log_debug("Reading on %d for %ld\n", readfd, buf_size);
@@ -188,11 +198,10 @@ int do_action_readfd(const int readfd, uint max_retries)
 			log_debug("failed on entries read");
 			goto free_buf;
 		}
-		if (ret == 0) {
-			log_debug("read returned 0... try again, try number %d\n",
-				  UINT_MAX - max_retries);
-			continue;
-		} else {
+
+		log_debug("read: ret %d, accum %d  (%d)\n", ret, read_accum,  - rep_count);
+		if (ret > 0) {
+			read_accum += ret;
 			hexdump(buf, buf_size);
 			ret = 0;
 		}
@@ -224,7 +233,7 @@ void t0(int cntl_fd)
 		return;
 	} else if (pid == 0) {
 		setsid();
-		do_action_readfd(cdq_fd, 10);
+		do_action_readfd(cdq_fd, max_retries);
 		exit(0);
 	}
 
@@ -279,7 +288,7 @@ void t1(int cntl_fd)
 		return;
 	} else if (pid == 0) {
 		setsid();
-		do_action_readfd(cdq_fd2, 10);
+		do_action_readfd(cdq_fd2, max_retries);
 		exit(0);
 	}
 
@@ -335,6 +344,9 @@ static struct opt_table opts[] = {
 	OPT_WITH_ARG("--cntl-bdf",
 			opt_set_charp, opt_show_charp,
 			&cntl_bdf, "Controller Bus:Device:Func Id"),
+	OPT_WITH_ARG("--max-retries",
+			opt_set_uintval, opt_show_uintval,
+			&max_retries, "Controller Bus:Device:Func Id"),
 	OPT_WITH_ARG("--verbose",
 			opt_set_uintval, opt_show_uintval,
 			&verbose, "Verbosity value"),
