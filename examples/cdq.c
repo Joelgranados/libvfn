@@ -120,7 +120,7 @@ int do_action_create(int cntl_fd, uint cntlid, uint16_t *cdqid, int *readfd)
 	cdq_cmd.mos = NVME_CDQ_MOS_CREATE_QT_UDMQ;
 
 	// Guess that its in the last bit
-	cdq_cmd.cdqp_offset = entry_nbyte;
+	cdq_cmd.cdqp_offset = entry_nbyte - 1;
 	cdq_cmd.cdqp_mask = 0x1;
 
 	if (ioctl(cntl_fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
@@ -171,9 +171,9 @@ int do_action_trsend_cmd(const uint16_t action, const uint16_t cdq_id)
 
 int do_action_readfd(const int readfd, uint rep_count)
 {
-	int ret = 0, read_accum = 0;
+	int ret = 0;
 	void *buf;
-	size_t buf_size;
+	size_t buf_size, read_accum = 0;
 
 	if (entry_nbyte == 0 || entry_nr == 0)
 		opt_usage_exit_fail("--entry-nbyte and --entry-nr need to be >0");
@@ -199,12 +199,12 @@ int do_action_readfd(const int readfd, uint rep_count)
 			goto free_buf;
 		}
 
-		log_debug("read: ret %d, accum %d  (%d)\n", ret, read_accum,  - rep_count);
 		if (ret > 0) {
 			read_accum += ret;
 			hexdump(buf, buf_size);
-			ret = 0;
 		}
+
+		log_debug("read: ret %d, accum %ld  (%d)\n", ret, read_accum,  - rep_count);
 	}
 
 free_buf:
