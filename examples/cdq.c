@@ -189,7 +189,7 @@ int do_action_readfd(const int readfd, uint rep_count)
 
 	hexdump(buf, buf_size);
 
-	for (rep_count = UINT_MAX - rep_count; rep_count != 0; ++rep_count)
+	for (;rep_count != 0; --rep_count)
 	{
 		sleep(1);
 		log_debug("Reading on %d for %ld\n", readfd, buf_size);
@@ -204,7 +204,7 @@ int do_action_readfd(const int readfd, uint rep_count)
 			hexdump(buf, buf_size);
 		}
 
-		log_debug("read: ret %d, accum %ld  (%d)\n", ret, read_accum,  - rep_count);
+		log_debug("read: ret %d, accum %ld  (%d)\n", ret, read_accum,  rep_count);
 	}
 
 free_buf:
