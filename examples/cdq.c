@@ -218,7 +218,7 @@ void t0(int cntl_fd)
 	int ret, cdq_fd;
 	uint16_t cdq_id;
 
-	log_debug("Executing test 0\n");
+	log_debug("Executing test 0: Read one CDQ\n");
 
 	ret = do_action_create(cntl_fd, cntlids[0], &cdq_id, &cdq_fd);
 	if (ret) {
@@ -258,7 +258,7 @@ void t1(int cntl_fd)
 	uint16_t cdq_id1, cdq_id2;
 	int cdq_fd1, cdq_fd2, ret;
 
-	log_debug("Executing test 1\n");
+	log_debug("Executing test 1: Manage several CDQs\n");
 	if (cntlids_count < 2) {
 		log_error("Too few cntlids for t1\n");
 		return;
