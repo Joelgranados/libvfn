@@ -211,95 +211,83 @@ free_buf:
 
 void t0(int cntl_fd)
 {
-	int cdq_fd;
+	int cdq_fd, ret;
 	uint16_t cdq_id;
 
 	log_debug("Executing test 0: Read one CDQ\n");
 
-	if (do_action_create(cntl_fd, cntlids[0], &cdq_id, &cdq_fd)) {
-		log_error("Failed to create cdq on %d\n", cntl_fd);
-		return;
-	}
+	ret = do_action_create(cntl_fd, cntlids[0], &cdq_id, &cdq_fd);
+	if (ret)
+		log_fatal("Failed to create cdq on %d. err: %d\n", cntl_fd, ret);
 
-	if (do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id)) {
-		log_error("do_action_trsend_cmd exited erroneously\n");
-		return;
-	}
+	ret = do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id);
+	if (ret)
+		log_fatal("do_action_trsend_cmd exited erroneously. err: %d\n", ret);
 
-	if (do_action_readfd(cdq_fd, max_retries)) {
-		log_error("do_action_readfd exited erroneously\n");
-		return;
-	}
+	ret = do_action_readfd(cdq_fd, max_retries);
+	if (ret)
+		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
 
-	if (close(cdq_fd))
-		log_error("Could not close exit the cdq fd properly\n");
+	ret = close(cdq_fd);
+	if (ret)
+		log_fatal("Could not close exit the cdq fd properly. err: %d\n", ret);
 }
 
 void t1(int cntl_fd)
 {
 	uint16_t cdq_id1, cdq_id2;
-	int cdq_fd1, cdq_fd2;
+	int cdq_fd1, cdq_fd2, ret;
 
 	log_debug("Executing test 1: Manage several CDQs\n");
-	if (cntlids_count < 2) {
-		log_error("Too few cntlids for t1\n");
-		return;
-	}
+	if (cntlids_count < 2)
+		log_fatal("Too few cntlids for t1\n");
 
-	if (do_action_create(cntl_fd, cntlids[0], &cdq_id1, &cdq_fd1)) {
-		log_error("Failed to create cdq1 on %d\n", cntl_fd);
-		return;
-	}
+	ret = do_action_create(cntl_fd, cntlids[0], &cdq_id1, &cdq_fd1);
+	if (ret)
+		log_fatal("Failed to create cdq1 on %d. err: %d\n", cntl_fd, ret);
 
-	if (do_action_create(cntl_fd, cntlids[1], &cdq_id2, &cdq_fd2)) {
-		log_error("Failed to create cdq2 on %d\n", cntl_fd);
-		return;
-	}
+	ret = do_action_create(cntl_fd, cntlids[1], &cdq_id2, &cdq_fd2);
+	if (ret)
+		log_fatal("Failed to create cdq2 on %d. err: %d\n", cntl_fd, ret);
 
-	if (close(cdq_fd1)) {
-		log_error("close cdq on cdq_id: %d exited erroneously\n", cdq_id1);
-		return;
-	}
+	ret = close(cdq_fd1);
+	if (ret)
+		log_fatal("close cdq on cdq_id: %d exited erroneously. err: %d\n", cdq_id1, ret);
 
-	if (do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id2)) {
-		log_debug("do_action_trsend_cmd exited erroneously\n");
-		return;
-	}
+	ret = do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id2);
+	if (ret)
+		log_fatal("do_action_trsend_cmd exited erroneously. err %d\n", ret);
 
-	if (do_action_readfd(cdq_fd2, max_retries)) {
-		log_debug("do_action_readfd exited erroneously\n");
-		return;
-	}
+	ret = do_action_readfd(cdq_fd2, max_retries);
+		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
 
-	if (close(cdq_fd2))
-		log_error("close cdq on cdq_id: %d exited erroneously\n", cdq_id2);
-
+	ret = close(cdq_fd2);
+	if (ret)
+		log_fatal("close cdq on cdq_id: %d exited erroneously. err: %d\n", cdq_id2, ret);
 }
 
 void t2(int cntl_fd)
 {
-	int cdq_fd;
+	int cdq_fd, ret;
 	uint16_t cdq_id;
 
 	log_debug("Executing test 0: Read one CDQ\n");
 
-	if (do_action_create(cntl_fd, cntlids[0], &cdq_id, &cdq_fd)) {
-		log_error("Failed to create cdq on %d\n", cntl_fd);
-		return;
-	}
+	ret = do_action_create(cntl_fd, cntlids[0], &cdq_id, &cdq_fd);
+	if (ret)
+		log_fatal("Failed to create cdq on %d. err: %d\n", cntl_fd, ret);
 
-	if (do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id)) {
-		log_error("do_action_trsend_cmd exited erroneously\n");
-		return;
-	}
+	ret = do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id);
+	if (ret)
+		log_fatal("do_action_trsend_cmd exited erroneously. err: %d\n", ret);
 
-	if (do_action_readfd(cdq_fd, max_retries)) {
-		log_error("do_action_readfd exited erroneously\n");
-		return;
-	}
+	ret = do_action_readfd(cdq_fd, max_retries);
+	if (ret)
+		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
 
-	if (close(cdq_fd))
-		log_error("Could not close exit the cdq fd properly\n");
+	ret = close(cdq_fd);
+	if (ret)
+		log_fatal("Could not close exit the cdq fd properly. err: %d\n", ret);
 }
 
 void (*test_funcs[MAX_TEST_NUM])(int)
