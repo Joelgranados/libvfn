@@ -16,16 +16,13 @@
  * more details.
  */
 
-#include <stdint.h>
 #include <vfn/support.h>
 #include <vfn/pci.h>
 #include <vfn/nvme.h>
 #include <sys/ioctl.h>
-#include <sys/wait.h>
 #include "ccan/opt/opt.h"
 #include "ccan/str/str.h"
 #include "linux/nvme_ioctl.h"
-#include "stdlib.h"
 #include "vfn/support/log.h"
 
 static char *cntl_bdf = "";
@@ -39,7 +36,7 @@ static uint verbose = 0;
 static uint max_retries = 10;
 bool s_usage;
 
-#define MAX_TEST_NUM	2
+#define MAX_TEST_NUM	3
 
 void hexdump(const void *data, size_t size) {
 	const unsigned char *byte = (const unsigned char *)data;
@@ -214,39 +211,25 @@ free_buf:
 
 void t0(int cntl_fd)
 {
-	pid_t pid;
-	int ret, cdq_fd;
+	int cdq_fd;
 	uint16_t cdq_id;
 
 	log_debug("Executing test 0: Read one CDQ\n");
 
-	ret = do_action_create(cntl_fd, cntlids[0], &cdq_id, &cdq_fd);
-	if (ret) {
+	if (do_action_create(cntl_fd, cntlids[0], &cdq_id, &cdq_fd)) {
 		log_error("Failed to create cdq on %d\n", cntl_fd);
 		return;
 	}
 
-	pid = fork();
-
-	if (pid < 0) {
-		log_error("failed to fork a read");
-		return;
-	} else if (pid == 0) {
-		setsid();
-		do_action_readfd(cdq_fd, max_retries);
-		exit(0);
-	}
-
-	ret = do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id);
-	if (ret) {
+	if (do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id)) {
 		log_error("do_action_trsend_cmd exited erroneously\n");
 		return;
 	}
 
-	wait(&ret);
-
-	if (!WIFEXITED(ret))
-		log_error("read fd child exited erroneously\n");
+	if (do_action_readfd(cdq_fd, max_retries)) {
+		log_error("do_action_readfd exited erroneously\n");
+		return;
+	}
 
 	if (close(cdq_fd))
 		log_error("Could not close exit the cdq fd properly\n");
@@ -254,9 +237,8 @@ void t0(int cntl_fd)
 
 void t1(int cntl_fd)
 {
-	pid_t pid;
 	uint16_t cdq_id1, cdq_id2;
-	int cdq_fd1, cdq_fd2, ret;
+	int cdq_fd1, cdq_fd2;
 
 	log_debug("Executing test 1: Manage several CDQs\n");
 	if (cntlids_count < 2) {
@@ -264,14 +246,12 @@ void t1(int cntl_fd)
 		return;
 	}
 
-	ret = do_action_create(cntl_fd, cntlids[0], &cdq_id1, &cdq_fd1);
-	if (ret) {
+	if (do_action_create(cntl_fd, cntlids[0], &cdq_id1, &cdq_fd1)) {
 		log_error("Failed to create cdq1 on %d\n", cntl_fd);
 		return;
 	}
 
-	ret = do_action_create(cntl_fd, cntlids[1], &cdq_id2, &cdq_fd2);
-	if (ret) {
+	if (do_action_create(cntl_fd, cntlids[1], &cdq_id2, &cdq_fd2)) {
 		log_error("Failed to create cdq2 on %d\n", cntl_fd);
 		return;
 	}
@@ -281,35 +261,49 @@ void t1(int cntl_fd)
 		return;
 	}
 
-	pid = fork();
-
-	if (pid < 0) {
-		log_error("failed to fork a read");
-		return;
-	} else if (pid == 0) {
-		setsid();
-		do_action_readfd(cdq_fd2, max_retries);
-		exit(0);
-	}
-
-	ret = do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id2);
-	if (ret) {
+	if (do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id2)) {
 		log_debug("do_action_trsend_cmd exited erroneously\n");
 		return;
 	}
 
-	wait(&ret);
-
-	if (!WIFEXITED(ret))
-		log_error("read fd child exited erroneously\n");
+	if (do_action_readfd(cdq_fd2, max_retries)) {
+		log_debug("do_action_readfd exited erroneously\n");
+		return;
+	}
 
 	if (close(cdq_fd2))
 		log_error("close cdq on cdq_id: %d exited erroneously\n", cdq_id2);
 
 }
 
+void t2(int cntl_fd)
+{
+	int cdq_fd;
+	uint16_t cdq_id;
+
+	log_debug("Executing test 0: Read one CDQ\n");
+
+	if (do_action_create(cntl_fd, cntlids[0], &cdq_id, &cdq_fd)) {
+		log_error("Failed to create cdq on %d\n", cntl_fd);
+		return;
+	}
+
+	if (do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id)) {
+		log_error("do_action_trsend_cmd exited erroneously\n");
+		return;
+	}
+
+	if (do_action_readfd(cdq_fd, max_retries)) {
+		log_error("do_action_readfd exited erroneously\n");
+		return;
+	}
+
+	if (close(cdq_fd))
+		log_error("Could not close exit the cdq fd properly\n");
+}
+
 void (*test_funcs[MAX_TEST_NUM])(int)
-	= {t0, t1};
+	= {t0, t1, t2};
 
 static char *collect_test_num(const char *optarg, __attribute__((__unused__)) void *unused)
 {
