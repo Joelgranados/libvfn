@@ -193,7 +193,8 @@ int do_action_readfd(const int readfd, uint rep_count)
 		ret = read(readfd, buf, buf_size);
 		if (ret < 0) {
 			log_debug("failed on entries read");
-			goto free_buf;
+			free(buf);
+			return -1;
 		}
 
 		if (ret > 0) {
@@ -204,9 +205,8 @@ int do_action_readfd(const int readfd, uint rep_count)
 		log_debug("read: ret %d, accum %ld  (%d)\n", ret, read_accum,  rep_count);
 	}
 
-free_buf:
 	free(buf);
-	return ret;
+	return read_accum;
 }
 
 void t0(int cntl_fd)
@@ -225,7 +225,7 @@ void t0(int cntl_fd)
 		log_fatal("do_action_trsend_cmd exited erroneously. err: %d\n", ret);
 
 	ret = do_action_readfd(cdq_fd, max_retries);
-	if (ret)
+	if (ret < 0)
 		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
 
 	ret = close(cdq_fd);
@@ -259,6 +259,7 @@ void t1(int cntl_fd)
 		log_fatal("do_action_trsend_cmd exited erroneously. err %d\n", ret);
 
 	ret = do_action_readfd(cdq_fd2, max_retries);
+	if (ret < 0)
 		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
 
 	ret = close(cdq_fd2);
@@ -282,7 +283,7 @@ void t2(int cntl_fd)
 		log_fatal("do_action_trsend_cmd exited erroneously. err: %d\n", ret);
 
 	ret = do_action_readfd(cdq_fd, max_retries);
-	if (ret)
+	if (ret < 0)
 		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
 
 	ret = close(cdq_fd);
