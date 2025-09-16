@@ -166,7 +166,7 @@ int do_action_trsend_cmd(const uint16_t action, const uint16_t cdq_id)
 	return ret;
 }
 
-int do_action_readfd(const int readfd, uint rep_count)
+int do_action_readfd(const int readfd, uint rep_count, bool ret_noread)
 {
 	int ret = 0;
 	void *buf;
@@ -202,6 +202,9 @@ int do_action_readfd(const int readfd, uint rep_count)
 			hexdump(buf, buf_size);
 		}
 
+		if (unlikely(ret_noread && ret == 0))
+			break;
+
 		log_debug("read: ret %d, accum %ld  (%d)\n", ret, read_accum,  rep_count);
 	}
 
@@ -224,7 +227,7 @@ void t0(int cntl_fd)
 	if (ret)
 		log_fatal("do_action_trsend_cmd exited erroneously. err: %d\n", ret);
 
-	ret = do_action_readfd(cdq_fd, max_retries);
+	ret = do_action_readfd(cdq_fd, max_retries, false);
 	if (ret < 0)
 		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
 
@@ -258,7 +261,7 @@ void t1(int cntl_fd)
 	if (ret)
 		log_fatal("do_action_trsend_cmd exited erroneously. err %d\n", ret);
 
-	ret = do_action_readfd(cdq_fd2, max_retries);
+	ret = do_action_readfd(cdq_fd2, max_retries, false);
 	if (ret < 0)
 		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
 
@@ -282,7 +285,7 @@ void t2(int cntl_fd)
 	if (ret)
 		log_fatal("do_action_trsend_cmd exited erroneously. err: %d\n", ret);
 
-	ret = do_action_readfd(cdq_fd, max_retries);
+	ret = do_action_readfd(cdq_fd, max_retries, false);
 	if (ret < 0)
 		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
 
