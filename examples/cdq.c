@@ -171,6 +171,7 @@ int do_action_readfd(const int readfd, uint rep_count, bool ret_noread)
 	int ret = 0;
 	void *buf;
 	size_t buf_size, read_accum = 0;
+	struct timespec ts = {.tv_sec = 1, .tv_nsec = 0};
 
 	if (entry_nbyte == 0 || entry_nr == 0)
 		opt_usage_exit_fail("--entry-nbyte and --entry-nr need to be >0");
@@ -188,11 +189,10 @@ int do_action_readfd(const int readfd, uint rep_count, bool ret_noread)
 
 	for (;rep_count != 0; --rep_count)
 	{
-		sleep(1);
-		log_debug("Reading on %d for %ld\n", readfd, buf_size);
+		nanosleep(&ts, NULL);
 		ret = read(readfd, buf, buf_size);
 		if (ret < 0) {
-			log_debug("failed on entries read");
+			log_debug("failed on entries read\n");
 			free(buf);
 			return -1;
 		}
