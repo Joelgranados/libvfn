@@ -170,9 +170,10 @@ int do_action_trsend_cmd(const uint16_t action, const uint16_t cdq_id)
 	return ret;
 }
 
-int do_action_readfd(const int readfd, uint rep_count, bool ret_noread)
+/* @num_zero_reads : number of consecutive zero reads. <= 0 is ignored */
+int do_action_readfd(const int readfd, uint rep_count, int num_zero_reads)
 {
-	int ret = 0;
+	int ret = 0, orig_num_zero_reads = num_zero_reads;
 	void *buf;
 	size_t buf_size, read_accum = 0;
 	struct timespec ts = {.tv_sec = 1, .tv_nsec = 0};
@@ -202,12 +203,15 @@ int do_action_readfd(const int readfd, uint rep_count, bool ret_noread)
 		if (ret > 0) {
 			read_accum += ret;
 			hexdump(buf, buf_size);
+			num_zero_reads = orig_num_zero_reads;
 		}
 
 		log_debug("read: ret %d, accum %ld  (%d)\n", ret, read_accum,  rep_count);
 
-		if (unlikely(ret_noread && ret == 0))
-			break;
+		if (orig_num_zero_reads > 0 && ret == 0) {
+			if (num_zero_reads-- == 0)
+				break;
+		}
 	}
 
 	free(buf);
@@ -229,7 +233,7 @@ void t0(int cntl_fd)
 	if (ret)
 		log_fatal("do_action_trsend_cmd exited erroneously. err: %d\n", ret);
 
-	ret = do_action_readfd(cdq_fd, max_retries_opt, false);
+	ret = do_action_readfd(cdq_fd, max_retries_opt, 0);
 	if (ret < 0)
 		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
 
@@ -263,7 +267,7 @@ void t1(int cntl_fd)
 	if (ret)
 		log_fatal("do_action_trsend_cmd exited erroneously. err %d\n", ret);
 
-	ret = do_action_readfd(cdq_fd2, max_retries_opt, false);
+	ret = do_action_readfd(cdq_fd2, max_retries_opt, 0);
 	if (ret < 0)
 		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
 
