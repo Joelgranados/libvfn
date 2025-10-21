@@ -124,7 +124,7 @@ int do_action_create(int cntl_fd, uint cntlid, uint16_t *cdqid, int *readfd)
 	cdq_cmd.cdqp_offset = entry_nbyte - 1;
 	cdq_cmd.cdqp_mask = 0x1;
 
-	if (ioctl(cntl_fd, NVME_IOCTL_ADMIN_CDQ, &cdq_cmd)) {
+	if (ioctl(cntl_fd, NVME_IOCTL_CDQ, &cdq_cmd)) {
 		log_debug("failed on NVME_CDQ_ADM_FLAGS_CREATE");
 		ret = -1;
 		goto out;
@@ -272,120 +272,10 @@ void t1(int cntl_fd)
 		log_fatal("close cdq on cdq_id: %d exited erroneously. err: %d\n", cdq_id2, ret);
 }
 
-static int set_sig_handler(int signal, void (handler(int, siginfo_t*, void*)))
-{
-	struct sigaction sa;
-	sa.sa_sigaction = handler;
-	sa.sa_flags = SA_SIGINFO;
-	sigemptyset(&sa.sa_mask);
-
-	return sigaction(signal, &sa, NULL);
-}
-
-/* no-op to trigger a return to the "pause" call */
-void sigalarm_handler(__attribute__((__unused__)) int signo,
-		      __attribute__((__unused__)) siginfo_t* info, 
-		      __attribute__((__unused__)) void* ucontext)
-{
-	log_debug("sigalarm_handler\n");
-	return;
-}
-
-void sigio_handler(__attribute__((__unused__)) int signo,
-		   siginfo_t* info,
-		   __attribute__((__unused__)) void* ucontext)
-{
-	log_debug("sigio_handler signo %d\n", signo);
-	log_debug("sigio_handler si_signo %d, si_errno %d, si_code %d\n",
-			info->si_signo, info->si_errno, info->si_code);
-	log_debug("sigio_handler fd: %d, band: %ld\n",
-			info->si_fd, info->si_band);
-	int ret = do_action_readfd(info->si_fd, max_retries, true);
-
-	/* change max_retries global */
-	max_retries = ret;
-}
-
 void t2(int cntl_fd)
 {
-	int cdq_fd, ret;
-	uint16_t cdq_id;
+	log_debug("Executing test 2: eventfd %d\n", cntl_fd);
 
-	log_debug("Executing test 2: non blocking read\n");
-
-	max_retries = max_retries_opt;
-
-	if (max_inactive <= 0)
-		log_fatal("Need to defin a max_inactive time in seconds greater than 0");
-
-	/* Trigger signal after max_inactive */
-	log_debug("set_sig_handler\n");
-	ret = set_sig_handler(SIGALRM, sigalarm_handler);
-	if (ret)
-		log_fatal("Failed to set SIGALRM handler\n");
-
-	ret = alarm(max_inactive);
-	if (ret)
-		log_fatal("It seems like there was a previous alarm: err: %d\n", ret);
-
-	log_debug("do_action_create\n");
-	ret = do_action_create(cntl_fd, cntlids[0], &cdq_id, &cdq_fd);
-	if (ret)
-		log_fatal("Failed to create cdq on %d. err: %d\n", cntl_fd, ret);
-
-	log_debug("set_sig_handler sigio\n");
-	ret = set_sig_handler(SIGIO, sigio_handler);
-	if (ret)
-		log_fatal("Failed to set SIGIO handler\n");
-
-	log_debug("fcntl\n");
-	ret = fcntl(cdq_fd, F_SETOWN, getpid());
-	if (ret)
-		log_fatal("Failed to F_SETOWN on CDQ FD\n");
-
-	ret = fcntl(cdq_fd, F_SETFL, fcntl(cdq_fd, F_GETFL) | FASYNC);
-	if (ret)
-		log_fatal("Failed to F_SETFL on CDQ FD\n");
-
-	ret = fcntl(cdq_fd, F_SETSIG, SIGIO);
-	if (ret)
-		log_fatal("Failed to set f_owner signal SIGIO\n");
-
-	log_debug("do_action_trsend_cmd\n");
-	ret = do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id);
-	if (ret)
-		log_fatal("do_action_trsend_cmd exited erroneously. err: %d\n", ret);
-
-	log_debug("do_action_readfd\n");
-	ret = do_action_readfd(cdq_fd, max_retries, true);
-	if (ret < 0)
-		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
-
-	/* change max_retries global */
-	max_retries = ret;
-
-
-	for (uint prev_max_ret = max_retries; max_retries > 0; prev_max_ret = max_retries) {
-		log_debug("Calling pause() max_retries : %d\n", max_retries);
-
-		/* ignore ret val; just replace alarm time */
-		alarm(max_inactive);
-
-		if (pause() != -1)
-			log_fatal("pause exited erroneously");
-		log_debug("max_retries after pause : %d\n", max_retries);
-
-		if (max_retries == prev_max_ret)
-			break;
-	}
-
-	ret = close(cdq_fd);
-	if (ret)
-		log_fatal("Could not close exit the cdq fd properly. err: %d\n", ret);
-
-	/* Leave the global as we found it */
-	log_debug("reseting max_retries to %d\n", max_retries_opt);
-	max_retries = max_retries_opt;
 }
 
 void (*test_funcs[MAX_TEST_NUM])(int)
