@@ -16,11 +16,11 @@
  * more details.
  */
 
-#include <signal.h>
 #include <vfn/support.h>
 #include <vfn/pci.h>
 #include <vfn/nvme.h>
 #include <sys/ioctl.h>
+#include <sys/eventfd.h>
 #include "ccan/opt/opt.h"
 #include "ccan/str/str.h"
 #include "linux/nvme_ioctl.h"
@@ -36,8 +36,6 @@ static uint entry_nbyte = 0;
 static uint entry_nr = 0;
 static uint verbose = 0;
 static uint max_retries_opt = MAX_RETRIES_DEFAULT;
-volatile uint max_retries = MAX_RETRIES_DEFAULT;
-static uint max_inactive = 0;
 bool s_usage;
 
 #define MAX_TEST_NUM	3
@@ -110,7 +108,7 @@ int get_bdf_fd(const char *bdf)
 int do_action_create(int cntl_fd, uint cntlid, uint16_t *cdqid, int *readfd)
 {
 	int ret = 0;
-	struct nvme_cdq_cmd cdq_cmd;
+	struct nvme_cdq_cmd cdq_cmd = {};
 
 	if (verbose > 0)
 		fprintf(stderr, "child cntl : %d\n", cntlid);
@@ -125,7 +123,7 @@ int do_action_create(int cntl_fd, uint cntlid, uint16_t *cdqid, int *readfd)
 	cdq_cmd.cdqp_mask = 0x1;
 
 	if (ioctl(cntl_fd, NVME_IOCTL_CDQ, &cdq_cmd)) {
-		log_debug("failed on NVME_CDQ_ADM_FLAGS_CREATE");
+		log_debug("failed on NVME_IOCTL_CDQ\n");
 		ret = -1;
 		goto out;
 	}
@@ -278,7 +276,50 @@ void t1(int cntl_fd)
 
 void t2(int cntl_fd)
 {
+	int cdq_fd, e_fd, ret;
+	uint16_t cdq_id;
+	uint64_t e_fd_v;
+	ssize_t s;
+	struct nvme_cdq_tpt cdq_tpt;
+
 	log_debug("Executing test 2: eventfd %d\n", cntl_fd);
+
+	ret = do_action_create(cntl_fd, cntlids[0], &cdq_id, &cdq_fd);
+	if (ret)
+		log_fatal("Failed to create cdq on %d. err: %d\n", cntl_fd, ret);
+
+	ret = do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id);
+	if (ret)
+		log_fatal("do_action_trsend_cmd exited erroneously. err: %d\n", ret);
+
+	ret = do_action_readfd(cdq_fd, max_retries_opt, 5);
+	if (ret < 0)
+		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
+
+	e_fd = eventfd(0, EFD_CLOEXEC);
+	if (e_fd < 0)
+		log_fatal("Error on eventfd creation, err: %d\n", errno);
+
+	cdq_tpt.cdq_id = cdq_id;
+	/* Here 10 is arbitrary and dependant on user space policies */
+	cdq_tpt.tpt_offset = 10;
+	cdq_tpt.fd = e_fd;
+
+	if (ioctl(cntl_fd, NVME_IOCTL_CDQ_TPT, &cdq_tpt))
+		log_fatal("failed on NVME_IOCTL_CDQ_TPT");
+
+	s = read(e_fd, &e_fd_v, sizeof(uint64_t));
+	if (s != sizeof(uint64_t))
+		log_fatal("Failed to read eventfd file descriptor variable");
+
+	/* Continue reading */
+	ret = do_action_readfd(cdq_fd, max_retries_opt, max_retries_opt);
+	if (ret < 0)
+		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
+
+	ret = close(cdq_fd);
+	if (ret)
+		log_fatal("Could not close exit the cdq fd properly. err: %d\n", ret);
 
 }
 
@@ -321,9 +362,6 @@ static struct opt_table opts[] = {
 	OPT_WITH_ARG("--max-retries",
 			opt_set_uintval, opt_show_uintval,
 			&max_retries_opt, "Controller Bus:Device:Func Id"),
-	OPT_WITH_ARG("--max-inactive",
-			opt_set_uintval, opt_show_uintval,
-			&max_inactive, "Max seconds to wait while inactive"),
 	OPT_WITH_ARG("--verbose",
 			opt_set_uintval, opt_show_uintval,
 			&verbose, "Verbosity value"),
