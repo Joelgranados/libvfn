@@ -3,7 +3,7 @@
 /*
  * This file is part of libvfn.
  *
- * Copyright (C) 2022 The libvfn Authors. All rights reserved.
+ * Copyright (C) 2025 The libvfn Authors. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -38,11 +38,14 @@ static uint verbose = 0;
 static uint max_retries_opt = MAX_RETRIES_DEFAULT;
 bool s_usage;
 
-#define MAX_TEST_NUM	3
+#define MAX_TEST_NUM	4
 
-void hexdump(const void *data, size_t size) {
+void hexdump(const void *data, size_t size, const char* name) {
 	const unsigned char *byte = (const unsigned char *)data;
 	size_t i, j;
+
+	if (name)
+		fprintf(stderr, "%s\n", name);
 
 	for (i = 0; i < size; i += 16) {
 		for (j = 0; j < 16; ++j) {
@@ -186,7 +189,7 @@ int do_action_readfd(const int readfd, uint rep_count, int num_zero_reads)
 		return -1;
 	}
 
-	hexdump(buf, buf_size);
+	hexdump(buf, buf_size, NULL);
 
 	for (;rep_count != 0; --rep_count)
 	{
@@ -199,8 +202,8 @@ int do_action_readfd(const int readfd, uint rep_count, int num_zero_reads)
 		}
 
 		if (ret > 0) {
-			read_accum += ret;
-			hexdump(buf, buf_size);
+			read_accum += ret; 
+			hexdump(buf, buf_size, NULL);
 			num_zero_reads = orig_num_zero_reads;
 		}
 
@@ -323,8 +326,43 @@ void t2(int cntl_fd)
 
 }
 
+void t3(int cntl_fd)
+{
+	int cdq_fd, ret;
+	uint16_t cdq_id;
+	void *user_cdq = NULL;
+	size_t cdq_size = entry_nr * entry_nbyte;
+
+	log_debug("Executing test 3: MMAP CDQ\n");
+
+	ret = do_action_create(cntl_fd, cntlids[0], &cdq_id, &cdq_fd);
+	if (ret)
+		log_fatal("Failed to create cdq on %d. err: %d\n", cntl_fd, ret);
+
+	user_cdq = mmap(NULL, cdq_size, PROT_READ, MAP_PRIVATE, cdq_fd, 0);
+	if (!user_cdq)
+		log_fatal("Failed to mmap the cdq into user space\n");
+	log_info("mmapping cdq to user space %p, %d, FD: %d\n",
+		 user_cdq, user_cdq == NULL, cdq_fd);
+
+	hexdump(user_cdq, cdq_size, "USER SPACE CDQ");
+	ret = do_action_trsend_cmd(NVME_CDQ_ADM_FLAGS_TR_SEND_START, cdq_id);
+	if (ret)
+		log_fatal("do_action_trsend_cmd exited erroneously. err: %d\n", ret);
+
+	ret = do_action_readfd(cdq_fd, max_retries_opt, 0);
+	if (ret < 0)
+		log_fatal("do_action_readfd exited erroneously. err: %d\n", ret);
+
+	hexdump(user_cdq, cdq_size, "USER SPACE CDQ");
+	ret = close(cdq_fd);
+	if (ret)
+		log_fatal("Could not close exit the cdq fd properly. err: %d\n", ret);
+}
+
+
 void (*test_funcs[MAX_TEST_NUM])(int)
-	= {t0, t1, t2};
+	= {t0, t1, t2, t3};
 
 static char *collect_test_num(const char *optarg, __attribute__((__unused__)) void *unused)
 {
