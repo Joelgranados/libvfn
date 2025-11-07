@@ -26,5 +26,7 @@ extern struct opt_table opts_base[];
 
 void opt_show_ulongval_hex(char buf[OPT_SHOW_LEN], const unsigned long *ul);
 void opt_show_uintval_hex(char buf[OPT_SHOW_LEN], const unsigned int *ui);
+void hexdump(const void *data, size_t size, const char* name);
+int get_bdf_fd(const char *bdf);
 
 #endif /* LIBVFN_EXAMPLES_COMMON_H */

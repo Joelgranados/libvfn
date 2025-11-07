@@ -17,8 +17,10 @@
  */
 
 #include <vfn/nvme.h>
+#include <vfn/pci/util.h>
 
 #include "ccan/opt/opt.h"
+#include <ctype.h>
 
 #include "common.h"
 
@@ -39,4 +41,67 @@ void opt_show_ulongval_hex(char buf[OPT_SHOW_LEN], const unsigned long *ul)
 void opt_show_uintval_hex(char buf[OPT_SHOW_LEN], const unsigned int *ui)
 {
 	snprintf(buf, OPT_SHOW_LEN, "0x%x", *ui);
+}
+
+void hexdump(const void *data, size_t size, const char* name)
+{
+	const unsigned char *byte = (const unsigned char *)data;
+	size_t i, j;
+
+	if (name)
+		fprintf(stderr, "%s\n", name);
+
+	for (i = 0; i < size; i += 16) {
+		for (j = 0; j < 16; ++j) {
+			if (i + j < size) {
+				if (byte[i + j] != 0)
+					break;
+			}
+		}
+		if (j == 16)
+			continue;
+
+		fprintf(stderr, "%08zx  ", i);  // Offset
+
+		// Hex bytes
+		for (j = 0; j < 16; ++j) {
+			if (i + j < size)
+				fprintf(stderr, "%02x ", byte[i + j]);
+			else
+				fprintf(stderr, "   ");
+		}
+
+		fprintf(stderr, " ");
+
+		// ASCII chars
+		for (j = 0; j < 16; ++j) {
+			if (i + j < size) {
+				unsigned char c = byte[i + j];
+				fprintf(stderr, "%c", isprint(c) ? c : '.');
+			}
+		}
+
+		fprintf(stderr, "\n");
+	}
+}
+
+int get_bdf_fd(const char *bdf)
+{
+	int fd;
+	__autofree char *cntl = NULL;
+	__autofree char *blk_name = NULL;
+
+	blk_name = pci_get_nvme_blkname(bdf);
+	if (!blk_name || asprintf(&cntl, "/dev/%s", blk_name) < 0) {
+		log_debug("could not determine blk name for BDF: %s\n", bdf);
+		return -1;
+	}
+
+	fd = open(cntl, O_RDWR);
+	if (fd < 0) {
+		log_debug("failed to open parent controller device path: %s\n", strerror(errno));
+		return -1;
+	}
+
+	return fd;
 }
