@@ -21,7 +21,7 @@ if config_host.get('HAVE_IOMMU_FAULT_QUEUE_ALLOC', false)
 endif
 
 if config_host.get('HAVE_CDQ_IOCTL', false)
-  examples += {'cdq': ['cdq.c'], 'cdq_mmap': ['cdq_mmap.c']}
+  examples += {'cdq_mmap': ['cdq_mmap.c']}
 endif
 
 foreach example, sources : examples
