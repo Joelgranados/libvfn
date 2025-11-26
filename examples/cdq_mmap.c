@@ -236,7 +236,8 @@ int setup_cdq_kernel(struct libvfn_cdq *cdq)
 	int ret = 0;
 	struct nvme_cdq_cmd cdq_cmd = {};
 
-	cdq_cmd.size_nbyte = cdq->entry_nbyte * cdq->entry_nr;
+	cdq_cmd.size_nbyte = libvfn_cdq_size(cdq);
+	cdq_cmd.entries = (unsigned long)cdq->entries;
 	cdq_cmd.cqs = cdq->child_cntl_id;
 	cdq_cmd.mos = NVME_CDQ_MOS_CREATE_QT_UDMQ;
 	if (cdq->tft_fd > 0)
@@ -249,7 +250,6 @@ int setup_cdq_kernel(struct libvfn_cdq *cdq)
 	}
 
 	cdq->id = cdq_cmd.id;
-	cdq->fd = cdq_cmd.fd;
 
 out:
 	return ret;
@@ -294,12 +294,13 @@ int main(int argc, char **argv)
 	if (cdq.tft_fd < 0)
 		log_fatal("Error on eventfd creation, err: %d\n", errno);
 
-	if (setup_cdq_kernel(&cdq))
-		log_fatal("Error initializint CDQ in kernel\n");
-
-	cdq.entries = mmap(NULL, libvfn_cdq_size(&cdq), PROT_READ, MAP_PRIVATE, cdq.fd, 0);
+	cdq.entries = mmap(NULL, libvfn_cdq_size(&cdq), PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (!cdq.entries)
 		log_fatal("Failed to mmap the cdq into user space\n");
+
+	if (setup_cdq_kernel(&cdq))
+		log_fatal("Error initializint CDQ in kernel\n");
 
 	if (trsend_cmd_start(&cdq))
 		log_fatal("Failed to send trsend to start CDQ\n");
