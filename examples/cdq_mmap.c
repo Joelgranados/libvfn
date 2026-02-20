@@ -19,10 +19,12 @@
 #include <vfn/nvme.h>
 #include <sys/ioctl.h>
 #include <sys/eventfd.h>
+#include <sys/epoll.h>
 #include "ccan/opt/opt.h"
 #include "ccan/str/str.h"
 #include "linux/nvme_ioctl.h"
 #include "common.h"
+#include "err.h"
 
 /* FIXME: This has the double evaluation issue */
 #define min(a, b) ((a < b) ? (a) : (b))
@@ -36,7 +38,8 @@
 #define NVME_FEAT_CDQ_ID_MASK			0xFFFF
 #define NVME_FEAT_CDQ				0x21
 #define NVME_CDQP_MASK				0x1
-#define arm_cdq_tpt(cdq, tpt_offset) featureid_send_cmd(cdq, tpt_offset)
+#define arm_cdq_tpt(cdq, tpt_offset) _featureid_send_cmd(cdq, tpt_offset)
+#define featureid_send_cmd(cdq) _featureid_send_cmd(cdq, 0)
 
 static char *opt_cntl_bdf = "";
 static uint cntlid = UINT_MAX;
@@ -58,6 +61,7 @@ struct libvfn_cdq {
 	uint		child_cntl_id;
 	int		cntl_fd;
 	int		tft_fd;
+	int		epoll_fd;
 };
 
 static struct opt_table opts[] = {
@@ -83,7 +87,7 @@ static struct opt_table opts[] = {
 	OPT_ENDTABLE,
 };
 
-int featureid_send_cmd(const struct libvfn_cdq *cdq, uint32_t tpt_offset)
+int _featureid_send_cmd(const struct libvfn_cdq *cdq, uint32_t tpt_offset)
 {
 	struct nvme_admin_cmd adm_cmd;
 	struct nvme_cmd_features feat_cmd;
@@ -106,6 +110,7 @@ int featureid_send_cmd(const struct libvfn_cdq *cdq, uint32_t tpt_offset)
 		feat_cmd.cdw11 |= cpu_to_le32(NVME_FEAT_CDQ_ETPT_MASK);
 		feat_cmd.cdw13 = cpu_to_le32((cdq->curr_entry + tpt_offset) % cdq->entry_nr);
 	}
+	log_debug("%s: featuresend with tpt_offset %d\n", __func__, tpt_offset);
 
 	memcpy(&adm_cmd, &feat_cmd, sizeof(feat_cmd));
 
@@ -147,7 +152,6 @@ size_t nvme_cdq_consume(struct libvfn_cdq *cdq, size_t count_nbyte,
 					      const char* name))
 {
 	int ret;
-	uint32_t tpt_offset = 0;
 	size_t tx_nbyte, target_nbyte = 0;
 	size_t orig_tail_nbyte = (cdq->entry_nr - cdq->curr_entry) * cdq->entry_nbyte;
 	void *from_buf = cdq->entries + (cdq->curr_entry * cdq->entry_nbyte);
@@ -167,7 +171,7 @@ size_t nvme_cdq_consume(struct libvfn_cdq *cdq, size_t count_nbyte,
 				       "nvme_cdq_consume wrapped values");
 	}
 
-	ret = featureid_send_cmd(cdq, tpt_offset);
+	ret = featureid_send_cmd(cdq);
 	if (ret < 0)
 		return ret;
 
@@ -187,6 +191,7 @@ int run_cdq(struct libvfn_cdq *cdq, uint rep_count, int num_zero_reads)
 
 	for (;rep_count != 0; --rep_count)
 	{
+		log_info("%s\n", __func__);
 		nanosleep(&ts, NULL);
 
 		ret = nvme_cdq_consume(cdq, libvfn_cdq_size(cdq), hexdump);
@@ -208,7 +213,6 @@ int run_cdq(struct libvfn_cdq *cdq, uint rep_count, int num_zero_reads)
 	return rep_count;
 }
 
-
 int trsend_cmd_start(const struct libvfn_cdq *cdq)
 {
 	struct nvme_admin_cmd cmd;
@@ -229,6 +233,26 @@ int trsend_cmd_start(const struct libvfn_cdq *cdq)
 	}
 
 	return 0;
+}
+
+int create_cdq_epoll(const int tft_fd)
+{
+	struct epoll_event ev;
+	ev.events = EPOLLIN;
+	int epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+	if (epoll_fd == -1) {
+		log_error("Error creating the epoll file descriptor. Errno %d\n", errno);
+		return -1;
+	}
+
+	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, tft_fd, &ev) == -1) {
+		log_error("Error adding %d to the epoll file descriptor. Errno %d\n",
+			  tft_fd, errno);
+		close (epoll_fd);
+		return -1;
+	}
+
+	return epoll_fd;
 }
 
 int setup_cdq_kernel(struct libvfn_cdq *cdq)
@@ -255,8 +279,25 @@ out:
 	return ret;
 }
 
+int teardown_cdq_kernel(struct libvfn_cdq *cdq)
+{
+	struct nvme_cdq_cmd cdq_cmd = {
+		.size_nbyte = 0,
+		.id = cdq->id,
+	};
+
+	if (ioctl(cdq->cntl_fd, NVME_IOCTL_CDQ, &cdq_cmd)) {
+		log_debug("failed on NVME_IOCTL_CDQ\n");
+		return -1;
+	}
+
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
+	int ret = 0;
+	struct epoll_event e_events;
 	struct libvfn_cdq cdq = {};
 	size_t s;
 	uint64_t e_fd_v;
@@ -283,46 +324,97 @@ int main(int argc, char **argv)
 
 	cdq.cntl_fd = get_bdf_fd(opt_cntl_bdf);
 	if (cdq.cntl_fd < 0) {
-		errno = -EPERM;
-		log_fatal("Error getting fd for %s\n", opt_cntl_bdf);
+		ret = -1;
+		errno = ret;
+		log_error("Error getting fd for %s\n", opt_cntl_bdf);
+		goto out_err;
 	}
 
 	if (opt_verbose > 0)
 		log_debug("child cntl : %d\n", cntlid);
 
 	cdq.tft_fd = eventfd(0, EFD_CLOEXEC);
-	if (cdq.tft_fd < 0)
-		log_fatal("Error on eventfd creation, err: %d\n", errno);
+	if (cdq.tft_fd < 0) {
+		ret = -1;
+		log_error("Error on eventfd creation, err: %d\n", errno);
+		goto out_err;
+	}
+	
+	cdq.epoll_fd = create_cdq_epoll(cdq.tft_fd);
+	if (cdq.epoll_fd <  0) {
+		ret = -1;
+		log_error("Error on epoll creation, err: %d\n", errno);
+		goto close_eventfd;
+	}
 
 	cdq.entries = mmap(NULL, libvfn_cdq_size(&cdq), PROT_READ | PROT_WRITE,
 			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (!cdq.entries)
-		log_fatal("Failed to mmap the cdq into user space\n");
+	if (!cdq.entries) {
+		ret = -1;
+		log_error("Failed to mmap the cdq into user space, err: %d\n", errno);
+		goto close_epoll;
+	}
 
-	if (setup_cdq_kernel(&cdq))
-		log_fatal("Error initializint CDQ in kernel\n");
+	if (setup_cdq_kernel(&cdq)) {
+		ret = -1;
+		log_error("Error initializint CDQ in kernel\n");
+		goto unmap_entries;
+	}
 
-	if (trsend_cmd_start(&cdq))
-		log_fatal("Failed to send trsend to start CDQ\n");
+	if (trsend_cmd_start(&cdq)) {
+		ret = -1;
+		log_error("Failed to send trsend to start CDQ\n");
+		goto del_cdq;
+	}
 
 	hexdump(cdq.entries, libvfn_cdq_size(&cdq), "Initial CDQ Value");
 
-	if (run_cdq(&cdq, opt_max_retries, 1) < 0)
-		log_fatal("Failed to run cdq\n");
+	if (run_cdq(&cdq, opt_max_retries, 1) < 0) {
+		ret = -1;
+		log_error("Failed to run cdq\n");
+		goto del_cdq;
+	}
 
 	/* Here 10 is arbitrary */
-	if (arm_cdq_tpt(&cdq, 10))
-		log_fatal("Error arming eventfd: %d\n", errno);
+	if (arm_cdq_tpt(&cdq, 10)) {
+		ret = -1;
+		log_error("Error arming eventfd: %d\n", errno);
+		goto del_cdq;
+	}
+
+	if (epoll_wait(cdq.epoll_fd, &e_events, 1, 10000) == 0) {
+		log_info("did not receive an event from the eventfd file descriptor\n");
+		goto del_cdq;
+	}
 
 	s = read(cdq.tft_fd, &e_fd_v, sizeof(uint64_t));
-	if (s != sizeof(uint64_t))
-		log_fatal("Failed to read eventfd file descriptor variable");
+	if (s != sizeof(uint64_t)) {
+		ret = -1;
+		log_error("Failed to read eventfd file descriptor variable");
+		goto del_cdq;
+	}
 
-	if (run_cdq(&cdq, opt_max_retries, 0) < 0)
-		log_fatal("Failed to run cdq\n");
+	if (run_cdq(&cdq, opt_max_retries, 0) < 0) {
+		ret = -1;
+		log_error("Failed to run cdq\n");
+		goto del_cdq;
+	}
 
-	if (munmap(cdq.entries, libvfn_cdq_size(&cdq)))
-		log_fatal("Error, Could not do munmap %d\n", errno);
+del_cdq:
+	ret |= teardown_cdq_kernel(&cdq);
 
-	exit(0);
+unmap_entries:
+	ret |= munmap(cdq.entries, libvfn_cdq_size(&cdq));
+
+close_epoll:
+	close(cdq.epoll_fd);
+
+close_eventfd:
+	close(cdq.tft_fd);
+
+out_err:
+	if (ret)
+		err(EXIT_FAILURE, NULL);
+
+	exit(ret);
 }
