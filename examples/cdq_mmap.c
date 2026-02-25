@@ -49,6 +49,7 @@ static uint opt_entry_nbyte = 0;
 static uint opt_entry_nr = 0;
 static uint opt_verbose = 0;
 static uint opt_max_retries = 10;
+static uint opt_exec_mod = 0;
 bool s_usage;
 
 struct libvfn_cdq {
@@ -86,6 +87,9 @@ static struct opt_table opts[] = {
 	OPT_WITH_ARG("--child-cntl",
 			opt_set_uintval, opt_show_uintval,
 			&cntlid, "Child controller to be written to"),
+	OPT_WITH_ARG("--exec-mod",
+			opt_set_uintval, opt_show_uintval,
+			&opt_exec_mod, "Mode of execution. 0: test tpt, 1: printstat"),
 	OPT_ENDTABLE,
 };
 
@@ -406,6 +410,64 @@ int cdq_tpt_wait(struct libvfn_cdq *cdq, const uint32_t tpt_offset, const int ti
 	return 0;
 }
 
+int cdq_tpt_test(struct libvfn_cdq *cdq, const uint max_retries)
+{
+	int ret = 0;
+
+	ret = cdq_attach_eventfd(cdq);
+	if (ret)
+		goto out_err;
+
+	ret = cdq_attach_epoll(cdq);
+	if (ret)
+		goto close_eventfd;
+
+	ret = cdq_map_entries(cdq);
+	if (ret)
+		goto close_epoll;
+
+	ret = setup_cdq_kernel(cdq);
+	if (ret)
+		goto unmap_entries;
+
+	ret = cdq_start(cdq);
+	if (ret)
+		goto del_cdq;
+
+	cdq_output((cdq), "Initial CDQ Value");
+
+	ret = run_cdq(cdq, max_retries, 1);
+	if (ret)
+		goto del_cdq;
+
+	/* 10 is arbitrary */
+	ret = cdq_tpt_wait(cdq, 10, 10000);
+	if (ret)
+		goto del_cdq;
+
+	ret = run_cdq(cdq, max_retries, 0);
+	if (ret)
+		goto del_cdq;
+
+del_cdq:
+	ret |= teardown_cdq_kernel(cdq);
+
+unmap_entries:
+	ret |= munmap(cdq->entries, libvfn_cdq_size(cdq));
+
+close_epoll:
+	close(cdq->epoll_fd);
+
+close_eventfd:
+	close(cdq->tft_fd);
+
+out_err:
+	if (ret)
+		err(EXIT_FAILURE, NULL);
+
+	return ret;
+}
+
 int main(int argc, char **argv)
 {
 	int ret = 0;
@@ -441,56 +503,9 @@ int main(int argc, char **argv)
 		goto out_err;
 	}
 
-	ret = cdq_attach_eventfd(&cdq);
-	if (ret)
-		goto out_err;
-
-	ret = cdq_attach_epoll(&cdq);
-	if (ret)
-		goto close_eventfd;
-
-	ret = cdq_map_entries(&cdq);
-	if (ret)
-		goto close_epoll;
-
-	ret = setup_cdq_kernel(&cdq);
-	if (ret)
-		goto unmap_entries;
-
-	ret = cdq_start(&cdq);
-	if (ret)
-		goto del_cdq;
-
-	cdq_output((&cdq), "Initial CDQ Value");
-
-	ret = run_cdq(&cdq, opt_max_retries, 1);
-	if (ret)
-		goto del_cdq;
-
-	/* 10 is arbitrary */
-	ret = cdq_tpt_wait(&cdq, 10, 10000);
-	if (ret)
-		goto del_cdq;
-
-	ret = run_cdq(&cdq, opt_max_retries, 0);
-	if (ret)
-		goto del_cdq;
-
-del_cdq:
-	ret |= teardown_cdq_kernel(&cdq);
-
-unmap_entries:
-	ret |= munmap(cdq.entries, libvfn_cdq_size(&cdq));
-
-close_epoll:
-	close(cdq.epoll_fd);
-
-close_eventfd:
-	close(cdq.tft_fd);
+	if (opt_exec_mod == 0)
+		ret = cdq_tpt_test(&cdq, opt_max_retries);
 
 out_err:
-	if (ret)
-		err(EXIT_FAILURE, NULL);
-
 	exit(ret);
 }
