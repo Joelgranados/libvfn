@@ -16,6 +16,9 @@
  * more details.
  */
 
+#include <stdint.h>
+#include <time.h>
+#include <signal.h>
 #include <vfn/nvme.h>
 #include <sys/ioctl.h>
 #include <sys/eventfd.h>
@@ -50,6 +53,8 @@ static uint opt_entry_nr = 0;
 static uint opt_verbose = 0;
 static uint opt_max_retries = 10;
 static uint opt_exec_mod = 0;
+static long kill_timeout = 0;
+static long uwin_nbyte = 0;
 bool s_usage;
 
 struct libvfn_cdq {
@@ -90,6 +95,13 @@ static struct opt_table opts[] = {
 	OPT_WITH_ARG("--exec-mod",
 			opt_set_uintval, opt_show_uintval,
 			&opt_exec_mod, "Mode of execution. 0: test tpt, 1: printstat"),
+	OPT_WITH_ARG("--kill-timeout",
+			opt_set_longval, opt_show_longval,
+			&kill_timeout, "Number of seconds to wait before sending a SIGALRM"),
+	OPT_WITH_ARG("--update-window",
+			opt_set_longval, opt_show_longval,
+			&uwin_nbyte, "The number of bytes to wait before sending the update cmd"),
+
 	OPT_ENDTABLE,
 };
 
@@ -151,6 +163,7 @@ static bool nvme_cdq_next(struct libvfn_cdq *cdq)
  * count_nbyte : Count bytes to "traverse" before sending feature id
  * cdq_consume_cb : call back function. passed a buffer pointer and size.
  *                  Assume that it is contiguous
+ * Return: Number of bytes consumed
  */
 size_t nvme_cdq_consume(struct libvfn_cdq *cdq, size_t count_nbyte,
 			void (*cdq_consume_cb)(const void * data,
@@ -221,6 +234,95 @@ int run_cdq(struct libvfn_cdq *cdq, uint rep_count, int num_zero_reads)
 	 * For now we do not need them
 	 */
 	//return rep_count;
+	return 0;
+}
+
+void timeout_handler(__attribute__((unused)) int sig) { exit(1); }
+void kill_p_timeout(const time_t timeout_sec)
+{
+	timer_t timerid;
+	struct sigevent sev;
+	struct itimerspec its = {
+		.it_value.tv_sec = timeout_sec,
+		.it_value.tv_nsec = 0,
+		.it_interval.tv_sec = 0,
+		.it_interval.tv_nsec = 0,
+	};
+
+	sev.sigev_notify = SIGEV_SIGNAL;
+	sev.sigev_signo = SIGALRM;
+	timer_create(CLOCK_MONOTONIC, &sev, &timerid);
+	signal(SIGALRM, timeout_handler);
+	timer_settime(timerid, 0, &its, NULL);
+}
+
+/** cdq_print_stat - print the cdq consumption stats
+ *
+ * @ts: total start. Tick returned at the start of the test
+ * @uwin_start: update window start. Tick at the start of every update phase window.
+ * @uwin_end: update window end. Tick at the end of every update phase window
+ * @uw_tx_nbytes: number of bytes transfered during the update window
+ * @t_tx_nbytes: total number of transfered bytes from ts
+ */
+void cdq_print_stat(const uint64_t ts,
+		    const uint64_t uwin_start, const uint64_t uwin_end,
+		    const size_t uw_tx_nbytes, const size_t t_tx_nbytes)
+{
+	uint64_t total_time_ns, window_time_ns;
+	double avg_bytes_per_sec;
+	uint64_t now = get_ticks();
+	static bool header_printed = false;
+
+	/* Print header only once */
+	if (!header_printed) {
+		printf("%17s %17s %17s %17s %17s\n",
+		       "Total time (ns)", "Window time (ns)", "Window TX bytes",
+		       "Total TX bytes", "Avg bytes/sec");
+		header_printed = true;
+	}
+
+	/* Calculate total time in nanoseconds from ts */
+	total_time_ns = (now - ts) * 1000000000ULL / __vfn_ticks_freq;
+
+	/* Calculate update window time in nanoseconds */
+	window_time_ns = (uwin_end - uwin_start) * 1000000000ULL / __vfn_ticks_freq;
+
+	/* Calculate average bytes/second */
+	if (total_time_ns > 0)
+		avg_bytes_per_sec = (double)t_tx_nbytes * 1000000000.0 / (double)total_time_ns;
+	else
+		avg_bytes_per_sec = 0.0;
+
+	/* Output statistics as a table row */
+	printf("%17lu %17lu %17zu %17zu %17.2f\n",
+	       total_time_ns, window_time_ns, uw_tx_nbytes,
+	       t_tx_nbytes, avg_bytes_per_sec);
+}
+
+/** run_stat_cdq - Run a cdq and output some stats
+ *
+ * @cdq: The controller data queue data struct
+ * @u_cadence_nbyte: Update cadence. A feature cmd updating the head will be sent
+ *                   Every u_cadence_nbytes. This value will be rounded up to the
+ *                   Entry size.
+ */
+int run_stat_cdq(struct libvfn_cdq *cdq, size_t u_cadence_nbyte)
+{
+	uint64_t tick_stat_start = get_ticks();
+	uint64_t uwin_start, uwin_end;
+	size_t w_tx_nbytes = 0, t_tx_nbytes = 0;
+
+	do {
+		uwin_start = get_ticks();
+		w_tx_nbytes = nvme_cdq_consume(cdq, u_cadence_nbyte, NULL);
+		uwin_end = get_ticks();
+
+		t_tx_nbytes += w_tx_nbytes;
+
+		cdq_print_stat(tick_stat_start, uwin_start, uwin_end, w_tx_nbytes, t_tx_nbytes );
+
+	} while (true);
+
 	return 0;
 }
 
@@ -468,6 +570,42 @@ out_err:
 	return ret;
 }
 
+int cdq_tpt_printstat(struct libvfn_cdq *cdq, size_t u_cadence_nbyte)
+{
+	int ret = 0;
+	u_cadence_nbyte = (u_cadence_nbyte / cdq->entry_nbyte) * cdq->entry_nbyte;
+	if (u_cadence_nbyte < 1) {
+		ret = -1;
+		goto out_err;
+	}
+
+	ret = cdq_map_entries(cdq);
+	if (ret)
+		goto out_err;
+
+	ret = setup_cdq_kernel(cdq);
+	if (ret)
+		goto unmap_entries;
+
+	ret = cdq_start(cdq);
+	if (ret)
+		goto del_cdq;
+
+	ret = run_stat_cdq(cdq, u_cadence_nbyte);
+
+del_cdq:
+	ret |= teardown_cdq_kernel(cdq);
+
+unmap_entries:
+	ret |= munmap(cdq->entries, libvfn_cdq_size(cdq));
+
+out_err:
+	if (ret)
+		err(EXIT_FAILURE, NULL);
+
+	return ret;
+}
+
 int main(int argc, char **argv)
 {
 	int ret = 0;
@@ -488,6 +626,9 @@ int main(int argc, char **argv)
 
 	opt_free_table();
 
+	if (kill_timeout > 0)
+		kill_p_timeout(kill_timeout);
+
 	zero_libvfn_cdq(&cdq);
 
 	cdq.entry_nbyte = opt_entry_nbyte;
@@ -503,8 +644,20 @@ int main(int argc, char **argv)
 		goto out_err;
 	}
 
-	if (opt_exec_mod == 0)
+	switch (opt_exec_mod) {
+	case 0:
 		ret = cdq_tpt_test(&cdq, opt_max_retries);
+		break;
+	case 1:
+		ret = cdq_tpt_printstat(&cdq, uwin_nbyte);
+		break;
+	default:
+		ret = -1;
+		log_error("Error: Execution mode %d is not recognized\n", opt_exec_mod);
+		break;
+	}
+
+
 
 out_err:
 	exit(ret);
