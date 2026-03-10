@@ -55,6 +55,7 @@ static uint opt_max_retries = 10;
 static uint opt_exec_mod = 0;
 static long kill_timeout = 0;
 static long uwin_nbyte = 0;
+static long pwin_nbyte = 0;
 bool s_usage;
 
 struct libvfn_cdq {
@@ -85,7 +86,7 @@ static struct opt_table opts[] = {
 			&opt_cntl_bdf, "Controller Bus:Device:Func Id"),
 	OPT_WITH_ARG("--max-retries",
 			opt_set_uintval, opt_show_uintval,
-			&opt_max_retries, "Controller Bus:Device:Func Id"),
+			&opt_max_retries, "max retries for 0 mod"),
 	OPT_WITH_ARG("--verbose",
 			opt_set_uintval, opt_show_uintval,
 			&opt_verbose, "Verbosity value"),
@@ -101,6 +102,9 @@ static struct opt_table opts[] = {
 	OPT_WITH_ARG("--update-window",
 			opt_set_longval, opt_show_longval,
 			&uwin_nbyte, "The number of bytes to wait before sending the update cmd"),
+	OPT_WITH_ARG("--print-window",
+			opt_set_longval, opt_show_longval,
+			&pwin_nbyte, "The nubmer of bytes before we print a statistic"),
 
 	OPT_ENDTABLE,
 };
@@ -305,21 +309,27 @@ void cdq_print_stat(const uint64_t ts,
  * @u_cadence_nbyte: Update cadence. A feature cmd updating the head will be sent
  *                   Every u_cadence_nbytes. This value will be rounded up to the
  *                   Entry size.
+ * @p_cadence_nbyte: print cadence. The amount of bytes to transfer before we
+ *                   print to stdout.
  */
-int run_stat_cdq(struct libvfn_cdq *cdq, size_t u_cadence_nbyte)
+int run_stat_cdq(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_cadence_nbyte)
 {
 	uint64_t tick_stat_start = get_ticks();
 	uint64_t uwin_start, uwin_end;
-	size_t w_tx_nbytes = 0, t_tx_nbytes = 0;
+	size_t w_tx_nbytes = 0, p_nbytes_accum = 0, t_tx_nbytes = 0;
 
 	do {
 		uwin_start = get_ticks();
 		w_tx_nbytes = nvme_cdq_consume(cdq, u_cadence_nbyte, NULL);
+		p_nbytes_accum += w_tx_nbytes;
 		uwin_end = get_ticks();
 
 		t_tx_nbytes += w_tx_nbytes;
 
-		cdq_print_stat(tick_stat_start, uwin_start, uwin_end, w_tx_nbytes, t_tx_nbytes );
+		if (p_nbytes_accum > p_cadence_nbyte) {
+			cdq_print_stat(tick_stat_start, uwin_start, uwin_end, p_nbytes_accum, t_tx_nbytes );
+			p_nbytes_accum = 0;
+		}
 
 	} while (true);
 
@@ -570,7 +580,7 @@ out_err:
 	return ret;
 }
 
-int cdq_tpt_printstat(struct libvfn_cdq *cdq, size_t u_cadence_nbyte)
+int cdq_tpt_printstat(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_cadence_nbyte)
 {
 	int ret = 0;
 	u_cadence_nbyte = (u_cadence_nbyte / cdq->entry_nbyte) * cdq->entry_nbyte;
@@ -591,7 +601,7 @@ int cdq_tpt_printstat(struct libvfn_cdq *cdq, size_t u_cadence_nbyte)
 	if (ret)
 		goto del_cdq;
 
-	ret = run_stat_cdq(cdq, u_cadence_nbyte);
+	ret = run_stat_cdq(cdq, u_cadence_nbyte, p_cadence_nbyte);
 
 del_cdq:
 	ret |= teardown_cdq_kernel(cdq);
@@ -649,7 +659,7 @@ int main(int argc, char **argv)
 		ret = cdq_tpt_test(&cdq, opt_max_retries);
 		break;
 	case 1:
-		ret = cdq_tpt_printstat(&cdq, uwin_nbyte);
+		ret = cdq_tpt_printstat(&cdq, uwin_nbyte, pwin_nbyte) ;
 		break;
 	default:
 		ret = -1;
