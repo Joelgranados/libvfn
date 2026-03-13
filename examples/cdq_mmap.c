@@ -57,6 +57,7 @@ static long kill_timeout = 0;
 static long uwin_nbyte = 0;
 static long pwin_nbyte = 0;
 bool s_usage;
+bool teardown = false;
 
 struct libvfn_cdq {
 	void		*entries;
@@ -241,7 +242,6 @@ int run_cdq(struct libvfn_cdq *cdq, uint rep_count, int num_zero_reads)
 	return 0;
 }
 
-void timeout_handler(__attribute__((unused)) int sig) { exit(1); }
 void kill_p_timeout(const time_t timeout_sec)
 {
 	timer_t timerid;
@@ -256,7 +256,6 @@ void kill_p_timeout(const time_t timeout_sec)
 	sev.sigev_notify = SIGEV_SIGNAL;
 	sev.sigev_signo = SIGALRM;
 	timer_create(CLOCK_MONOTONIC, &sev, &timerid);
-	signal(SIGALRM, timeout_handler);
 	timer_settime(timerid, 0, &its, NULL);
 }
 
@@ -331,7 +330,7 @@ int run_stat_cdq(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_cadenc
 			p_nbytes_accum = 0;
 		}
 
-	} while (true);
+	} while (!teardown);
 
 	return 0;
 }
@@ -616,6 +615,7 @@ out_err:
 	return ret;
 }
 
+void set_teardown(__attribute__((unused)) int sig) { teardown = true; }
 int main(int argc, char **argv)
 {
 	int ret = 0;
@@ -636,6 +636,8 @@ int main(int argc, char **argv)
 
 	opt_free_table();
 
+	signal(SIGALRM, set_teardown);
+	signal(SIGINT, set_teardown);
 	if (kill_timeout > 0)
 		kill_p_timeout(kill_timeout);
 
