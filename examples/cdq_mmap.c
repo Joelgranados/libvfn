@@ -269,7 +269,8 @@ void kill_p_timeout(const time_t timeout_sec)
  */
 void cdq_print_stat(const uint64_t ts,
 		    const uint64_t uwin_start, const uint64_t uwin_end,
-		    const size_t uw_tx_nbytes, const size_t t_tx_nbytes)
+		    const size_t uw_tx_nbytes, const size_t t_tx_nbytes,
+		    uint32_t entry_size)
 {
 	uint64_t total_time_ns, window_time_ns;
 	double avg_bytes_per_sec;
@@ -279,8 +280,8 @@ void cdq_print_stat(const uint64_t ts,
 	/* Print header only once */
 	if (!header_printed) {
 		printf("%17s %17s %17s %17s %17s\n",
-		       "Total time (ns)", "Window time (ns)", "Window TX bytes",
-		       "Total TX bytes", "Avg bytes/sec");
+		       "Total time (ns)", "Window time (ns)", "Window TX entries",
+		       "Total TX entries", "Avg bytes/sec");
 		header_printed = true;
 	}
 
@@ -296,10 +297,14 @@ void cdq_print_stat(const uint64_t ts,
 	else
 		avg_bytes_per_sec = 0.0;
 
+	if (entry_size > 1) {
+		printf("Entry size must be a non zero positive %d\n", entry_size);
+		entry_size = 1;
+	}
 	/* Output statistics as a table row */
 	printf("%17lu %17lu %17zu %17zu %17.2f\n",
-	       total_time_ns, window_time_ns, uw_tx_nbytes,
-	       t_tx_nbytes, avg_bytes_per_sec);
+	       total_time_ns, window_time_ns, uw_tx_nbytes/entry_size,
+	       t_tx_nbytes/entry_size, avg_bytes_per_sec);
 }
 
 /** run_stat_cdq - Run a cdq and output some stats
@@ -326,7 +331,9 @@ int run_stat_cdq(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_cadenc
 		t_tx_nbytes += w_tx_nbytes;
 
 		if (p_nbytes_accum > p_cadence_nbyte) {
-			cdq_print_stat(tick_stat_start, uwin_start, uwin_end, p_nbytes_accum, t_tx_nbytes );
+			cdq_print_stat(tick_stat_start, uwin_start, \
+				       uwin_end, p_nbytes_accum, t_tx_nbytes,
+				       cdq->entry_nbyte);
 			p_nbytes_accum = 0;
 		}
 
@@ -668,8 +675,6 @@ int main(int argc, char **argv)
 		log_error("Error: Execution mode %d is not recognized\n", opt_exec_mod);
 		break;
 	}
-
-
 
 out_err:
 	exit(ret);
