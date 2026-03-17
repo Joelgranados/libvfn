@@ -74,6 +74,18 @@ struct libvfn_cdq {
 	int		epoll_fd;
 };
 
+struct cdq_tpt_state {
+	pthread_mutex_t lock;
+	uint32_t	tpt_offset;              // Current threshold in entries
+	uint32_t	n;                      // Progression step (1, 2, 3, ...)
+	bool		breaking_point_reached; // Stop setting triggers
+	pthread_t	monitor_thread;
+};
+
+static struct cdq_tpt_state tpt_state = {
+	.lock = PTHREAD_MUTEX_INITIALIZER,
+};
+
 static struct opt_table opts[] = {
 	OPT_WITHOUT_ARG("-h|--help", opt_set_bool, &s_usage, "show usage"),
 	OPT_WITH_ARG("--entry-nbyte",
@@ -109,6 +121,89 @@ static struct opt_table opts[] = {
 
 	OPT_ENDTABLE,
 };
+
+uint32_t cdq_tpt_next_threshold(uint32_t n, uint32_t entry_nr)
+{
+	uint32_t power_of_2 = 1U << n;
+	uint32_t threshold = ((power_of_2 - 1) * entry_nr) / power_of_2;
+	return (threshold >= entry_nr) ? (entry_nr - 1) : threshold;
+}
+
+void cdq_tpt_handle_trigger(struct libvfn_cdq *cdq)
+{
+	uint32_t old_tpt, new_tpt;
+
+	pthread_mutex_lock(&tpt_state.lock);
+	if (tpt_state.breaking_point_reached) {
+		pthread_mutex_unlock(&tpt_state.lock);
+		return;
+	}
+
+	old_tpt = tpt_state.tpt_offset;
+	new_tpt = cdq_tpt_next_threshold(++(tpt_state.n), cdq->entry_nr);
+
+	if (new_tpt == old_tpt)
+		tpt_state.breaking_point_reached = true;
+	else
+		tpt_state.tpt_offset = new_tpt;
+
+	pthread_mutex_unlock(&tpt_state.lock);
+
+	if (new_tpt == old_tpt)
+		printf("[TPT TRIGGER] Breaking point reached at %u entries\n", old_tpt);
+	else
+		printf("[TPT TRIGGER] update threshold: %u -> %u\n", old_tpt, new_tpt);
+	fflush(stdout);
+}
+
+int cdq_tpt_wait(struct libvfn_cdq *cdq, const int timeout)
+{
+	size_t s;
+	int ret = 0;
+	uint64_t e_fd_v;
+	struct epoll_event e_events;
+
+	ret = epoll_wait(cdq->epoll_fd, &e_events, 1, timeout);
+	/* Forward the error unless its a EINTR && forward the timeout */
+	if (ret <= 0) {
+		if (errno == EINTR)
+			return 0;
+		goto err_out;
+	}
+
+	s = read(cdq->tft_fd, &e_fd_v, sizeof(uint64_t));
+	if (s != sizeof(uint64_t)) {
+		ret = -1;
+		goto err_out;
+	}
+
+	return s;
+
+err_out:
+	if (ret)
+		log_error("epoll_wait failed: %s\n", strerror(errno));
+	return ret;
+}
+
+void *cdq_tpt_monitor_thread(void *arg)
+{
+	struct libvfn_cdq *cdq = (struct libvfn_cdq *)arg;
+	int ret;
+
+	while (!teardown) {
+		ret = cdq_tpt_wait(cdq, 1000);
+
+		if (ret == 0)  // Timeout
+			continue;
+
+		if (ret < 0)
+			break;
+
+		cdq_tpt_handle_trigger(cdq);
+	}
+
+	return NULL;
+}
 
 int _featureid_send_cmd(const struct libvfn_cdq *cdq, uint32_t tpt_offset)
 {
@@ -307,6 +402,33 @@ void cdq_print_stat(const uint64_t ts,
 	       t_tx_nbytes/entry_size, avg_bytes_per_sec);
 }
 
+void init_tpt_trigger(const struct libvfn_cdq *cdq)
+{
+	pthread_mutex_lock(&tpt_state.lock);
+	tpt_state.n = 1;
+	tpt_state.breaking_point_reached = false;
+	tpt_state.tpt_offset = cdq->entry_nr / 2;
+	pthread_mutex_unlock(&tpt_state.lock);
+}
+
+int update_tpt_trigger(struct libvfn_cdq *cdq)
+{
+	bool set_trigger = true;
+	uint32_t tpt_offset;
+
+	pthread_mutex_lock(&tpt_state.lock);
+	if (!tpt_state.breaking_point_reached)
+		tpt_offset = tpt_state.tpt_offset;
+	else
+		set_trigger = false;
+	pthread_mutex_unlock(&tpt_state.lock);
+
+	if (set_trigger)
+		return arm_cdq_tpt(cdq, tpt_offset);
+
+	return 0;
+}
+
 /** run_stat_cdq - Run a cdq and output some stats
  *
  * @cdq: The controller data queue data struct
@@ -321,6 +443,9 @@ int run_stat_cdq(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_cadenc
 	uint64_t tick_stat_start = get_ticks();
 	uint64_t uwin_start, uwin_end;
 	size_t w_tx_nbytes = 0, p_nbytes_accum = 0, t_tx_nbytes = 0;
+	int ret = 0;
+
+	init_tpt_trigger(cdq);
 
 	do {
 		uwin_start = get_ticks();
@@ -329,6 +454,10 @@ int run_stat_cdq(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_cadenc
 		uwin_end = get_ticks();
 
 		t_tx_nbytes += w_tx_nbytes;
+
+		ret = update_tpt_trigger(cdq);
+		if (ret)
+			break;
 
 		if (p_nbytes_accum > p_cadence_nbyte) {
 			cdq_print_stat(tick_stat_start, uwin_start, \
@@ -339,7 +468,7 @@ int run_stat_cdq(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_cadenc
 
 	} while (!teardown);
 
-	return 0;
+	return ret;
 }
 
 int trsend_cmd_start(const struct libvfn_cdq *cdq)
@@ -423,19 +552,6 @@ int teardown_cdq_kernel(struct libvfn_cdq *cdq)
 	return 0;
 }
 
-	void		*entries;
-	uint32_t	curr_entry;
-	uint		cdqp_offset;
-	uint8_t		curr_cdqp;
-	int		fd;
-	uint16_t	id;
-	uint32_t	entry_nbyte;
-	uint32_t	entry_nr;
-	uint		child_cntl_id;
-	int		cntl_fd;
-	int		tft_fd;
-	int		epoll_fd;
-
 void zero_libvfn_cdq(struct libvfn_cdq *cdq)
 {
 	cdq->entries = NULL;
@@ -501,33 +617,6 @@ int cdq_map_entries(struct libvfn_cdq *cdq)
 	return 0;
 }
 
-int cdq_tpt_wait(struct libvfn_cdq *cdq, const uint32_t tpt_offset, const int timeout)
-{
-	size_t s;
-	int ret = 0;
-	uint64_t e_fd_v;
-	struct epoll_event e_events;
-
-	/* 10 is arbitrary */
-	ret = arm_cdq_tpt(cdq, tpt_offset);
-	if (ret)
-		return -1;
-
-	if (epoll_wait(cdq->epoll_fd, &e_events, 1, timeout) == 0) {
-		log_info("did not receive an event from the eventfd file descriptor\n");
-		return -1;
-	}
-
-	s = read(cdq->tft_fd, &e_fd_v, sizeof(uint64_t));
-	if (s != sizeof(uint64_t)) {
-		ret = -1;
-		log_error("Failed to read eventfd file descriptor variable");
-		return -1;
-	}
-
-	return 0;
-}
-
 int cdq_tpt_test(struct libvfn_cdq *cdq, const uint max_retries)
 {
 	int ret = 0;
@@ -559,8 +648,12 @@ int cdq_tpt_test(struct libvfn_cdq *cdq, const uint max_retries)
 		goto del_cdq;
 
 	/* 10 is arbitrary */
-	ret = cdq_tpt_wait(cdq, 10, 10000);
+	ret = arm_cdq_tpt(cdq, 10);
 	if (ret)
+		goto del_cdq;
+
+	ret = cdq_tpt_wait(cdq, 10000);
+	if (ret < 1) /* skip run_ceq on timeout */
 		goto del_cdq;
 
 	ret = run_cdq(cdq, max_retries, 0);
@@ -595,9 +688,18 @@ int cdq_tpt_printstat(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_c
 		goto out_err;
 	}
 
-	ret = cdq_map_entries(cdq);
+	// Set up eventfd for tail pointer triggers
+	ret = cdq_attach_eventfd(cdq);
 	if (ret)
 		goto out_err;
+
+	ret = cdq_attach_epoll(cdq);
+	if (ret)
+		goto close_eventfd;
+
+	ret = cdq_map_entries(cdq);
+	if (ret)
+		goto close_epoll;
 
 	ret = setup_cdq_kernel(cdq);
 	if (ret)
@@ -607,13 +709,30 @@ int cdq_tpt_printstat(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_c
 	if (ret)
 		goto del_cdq;
 
+	ret = pthread_create(&tpt_state.monitor_thread, NULL,
+			     cdq_tpt_monitor_thread, cdq);
+	if (ret) {
+		log_error("Failed to create monitoring thread: %s\n", strerror(ret));
+		goto del_cdq;
+	}
+
+	// Run the consumption loop
 	ret = run_stat_cdq(cdq, u_cadence_nbyte, p_cadence_nbyte);
+
+	// Wait for monitor thread to finish
+	pthread_join(tpt_state.monitor_thread, NULL);
 
 del_cdq:
 	ret |= teardown_cdq_kernel(cdq);
 
 unmap_entries:
 	ret |= munmap(cdq->entries, libvfn_cdq_size(cdq));
+
+close_epoll:
+	close(cdq->epoll_fd);
+
+close_eventfd:
+	close(cdq->tft_fd);
 
 out_err:
 	if (ret)
