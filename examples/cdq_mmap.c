@@ -297,7 +297,7 @@ void cdq_print_stat(const uint64_t ts,
 	else
 		avg_bytes_per_sec = 0.0;
 
-	if (entry_size > 1) {
+	if (entry_size < 1) {
 		printf("Entry size must be a non zero positive %d\n", entry_size);
 		entry_size = 1;
 	}
