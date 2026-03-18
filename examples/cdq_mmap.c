@@ -285,7 +285,6 @@ size_t nvme_cdq_consume(struct libvfn_cdq *cdq, size_t count_nbyte,
 					      size_t count_nbyte,
 					      const char* name))
 {
-	int ret;
 	size_t tx_nbyte, target_nbyte = 0;
 	size_t orig_tail_nbyte = (cdq->entry_nr - cdq->curr_entry) * cdq->entry_nbyte;
 	void *from_buf = cdq->entries + (cdq->curr_entry * cdq->entry_nbyte);
@@ -304,10 +303,6 @@ size_t nvme_cdq_consume(struct libvfn_cdq *cdq, size_t count_nbyte,
 			cdq_consume_cb(from_buf,  target_nbyte - tx_nbyte,
 				       "nvme_cdq_consume wrapped values");
 	}
-
-	ret = featureid_send_cmd(cdq);
-	if (ret < 0)
-		return ret;
 
 	return target_nbyte;
 }
@@ -334,6 +329,10 @@ int run_cdq(struct libvfn_cdq *cdq, uint rep_count, int num_zero_reads)
 			log_error("failed to consume cdq\n");
 			return -1;
 		}
+
+		ret = featureid_send_cmd(cdq);
+		if (ret < 0)
+			return ret;
 
 		if (ret > 0)
 			num_zero_reads = orig_num_zero_reads;
@@ -472,13 +471,16 @@ int run_stat_cdq(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_cadenc
 
 		t_tx_nbytes += w_tx_nbytes;
 
-		if (opt_tpt_monitor) {
-			ret = update_tpt_trigger(cdq);
-			if (ret)
-				break;
-		}
-
 		if (p_nbytes_accum > p_cadence_nbyte) {
+			if (opt_tpt_monitor)
+				ret = update_tpt_trigger(cdq);
+			else 
+				ret = featureid_send_cmd(cdq);
+
+			if (ret < 0)
+				break;
+
+
 			cdq_print_stat(tick_stat_start, uwin_start, \
 				       uwin_end, p_nbytes_accum, t_tx_nbytes,
 				       cdq->entry_nbyte);
