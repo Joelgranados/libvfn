@@ -236,8 +236,19 @@ int _featureid_send_cmd(const struct libvfn_cdq *cdq, uint32_t tpt_offset)
 	memcpy(&adm_cmd, &feat_cmd, sizeof(feat_cmd));
 
 	if (ioctl(cdq->cntl_fd, NVME_IOCTL_ADMIN_CMD, &adm_cmd)) {
-		log_error("failed sending feature id command (CDQ %u, tpt_offset %u): %s (errno %d)\n",
-			  cdq->id, tpt_offset, strerror(errno), errno);
+		uint32_t result = adm_cmd.result;
+		uint16_t status = result >> 17;  // Status field from CQE DW3
+		uint8_t sc = (status >> 1) & 0xFF;  // Status Code (SC)
+		uint8_t sct = (status >> 9) & 0x7;  // Status Code Type (SCT)
+		const char *sct_str[] = {"Generic", "Cmd Specific", "Media", "Reserved",
+					 "Reserved", "Reserved", "Reserved", "Vendor"};
+
+		log_error("feature id command failed (CDQ %u, tpt_offset %u): "
+			  "NVMe Status: %s Command Status [SCT=%u, SC=%02Xh] (0x%04x), "
+			  "errno: %s (%d)\n",
+			  cdq->id, tpt_offset,
+			  sct < 8 ? sct_str[sct] : "Unknown",
+			  sct, sc, status, strerror(errno), errno);
 		return -1;
 	}
 
