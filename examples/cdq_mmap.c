@@ -236,7 +236,8 @@ int _featureid_send_cmd(const struct libvfn_cdq *cdq, uint32_t tpt_offset)
 	memcpy(&adm_cmd, &feat_cmd, sizeof(feat_cmd));
 
 	if (ioctl(cdq->cntl_fd, NVME_IOCTL_ADMIN_CMD, &adm_cmd)) {
-		log_debug("failed sending the feature id command\n");
+		log_error("failed sending feature id command (CDQ %u, tpt_offset %u): %s (errno %d)\n",
+			  cdq->id, tpt_offset, strerror(errno), errno);
 		return -1;
 	}
 
@@ -319,7 +320,7 @@ int run_cdq(struct libvfn_cdq *cdq, uint rep_count, int num_zero_reads)
 		ret = nvme_cdq_consume(cdq, libvfn_cdq_size(cdq), hexdump);
 
 		if (ret < 0) {
-			log_debug("failed to consume cdq\n");
+			log_error("failed to consume cdq\n");
 			return -1;
 		}
 
@@ -493,7 +494,7 @@ int trsend_cmd_start(const struct libvfn_cdq *cdq)
 	memcpy(&cmd, &cdq_cmd, sizeof(cdq_cmd));
 
 	if (ioctl(cdq->cntl_fd, NVME_IOCTL_ADMIN_CMD, &cmd)) {
-		log_debug("failed sending the track command for cdq: %d\n", cdq->id);
+		log_error("failed sending the track command for cdq: %d\n", cdq->id);
 		return -1;
 	}
 
@@ -533,7 +534,7 @@ int setup_cdq_kernel(struct libvfn_cdq *cdq)
 		cdq_cmd.tpt_fd = cdq->tft_fd;
 
 	if (ioctl(cdq->cntl_fd, NVME_IOCTL_CDQ, &cdq_cmd)) {
-		log_debug("setup_cdq_kernel: failed on NVME_IOCTL_CDQ\n");
+		log_error("setup_cdq_kernel: failed on NVME_IOCTL_CDQ\n");
 		ret = -1;
 		goto out;
 	}
@@ -552,7 +553,7 @@ int teardown_cdq_kernel(struct libvfn_cdq *cdq)
 	};
 
 	if (ioctl(cdq->cntl_fd, NVME_IOCTL_CDQ, &cdq_cmd)) {
-		log_debug("failed on NVME_IOCTL_CDQ\n");
+		log_error("failed on NVME_IOCTL_CDQ\n");
 		return -1;
 	}
 
