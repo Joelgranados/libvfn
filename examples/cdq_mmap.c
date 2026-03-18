@@ -58,6 +58,7 @@ static long uwin_nbyte = 0;
 static long pwin_nbyte = 0;
 bool s_usage;
 bool teardown = false;
+bool opt_tpt_monitor = false;
 
 struct libvfn_cdq {
 	void		*entries;
@@ -118,6 +119,8 @@ static struct opt_table opts[] = {
 	OPT_WITH_ARG("--print-window",
 			opt_set_longval, opt_show_longval,
 			&pwin_nbyte, "The nubmer of bytes before we print a statistic"),
+	OPT_WITHOUT_ARG("--tpt-monitor", opt_set_bool, &opt_tpt_monitor,
+			"Enable tail pointer trigger monitoring"),
 
 	OPT_ENDTABLE,
 };
@@ -400,6 +403,7 @@ void cdq_print_stat(const uint64_t ts,
 	printf("%17lu %17lu %17zu %17zu %17.2f\n",
 	       total_time_ns, window_time_ns, uw_tx_nbytes/entry_size,
 	       t_tx_nbytes/entry_size, avg_bytes_per_sec);
+	fflush(stdout);
 }
 
 void init_tpt_trigger(const struct libvfn_cdq *cdq)
@@ -445,7 +449,8 @@ int run_stat_cdq(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_cadenc
 	size_t w_tx_nbytes = 0, p_nbytes_accum = 0, t_tx_nbytes = 0;
 	int ret = 0;
 
-	init_tpt_trigger(cdq);
+	if (opt_tpt_monitor)
+		init_tpt_trigger(cdq);
 
 	do {
 		uwin_start = get_ticks();
@@ -455,9 +460,11 @@ int run_stat_cdq(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_cadenc
 
 		t_tx_nbytes += w_tx_nbytes;
 
-		ret = update_tpt_trigger(cdq);
-		if (ret)
-			break;
+		if (opt_tpt_monitor) {
+			ret = update_tpt_trigger(cdq);
+			if (ret)
+				break;
+		}
 
 		if (p_nbytes_accum > p_cadence_nbyte) {
 			cdq_print_stat(tick_stat_start, uwin_start, \
@@ -688,18 +695,24 @@ int cdq_tpt_printstat(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_c
 		goto out_err;
 	}
 
-	// Set up eventfd for tail pointer triggers
-	ret = cdq_attach_eventfd(cdq);
-	if (ret)
-		goto out_err;
+	if (opt_tpt_monitor) {
+		// Set up eventfd for tail pointer triggers
+		ret = cdq_attach_eventfd(cdq);
+		if (ret)
+			goto out_err;
 
-	ret = cdq_attach_epoll(cdq);
-	if (ret)
-		goto close_eventfd;
+		ret = cdq_attach_epoll(cdq);
+		if (ret)
+			goto close_eventfd;
+	}
 
 	ret = cdq_map_entries(cdq);
-	if (ret)
-		goto close_epoll;
+	if (ret) {
+		if (opt_tpt_monitor)
+			goto close_epoll;
+		else
+			goto out_err;
+	}
 
 	ret = setup_cdq_kernel(cdq);
 	if (ret)
@@ -709,18 +722,21 @@ int cdq_tpt_printstat(struct libvfn_cdq *cdq, size_t u_cadence_nbyte, size_t p_c
 	if (ret)
 		goto del_cdq;
 
-	ret = pthread_create(&tpt_state.monitor_thread, NULL,
-			     cdq_tpt_monitor_thread, cdq);
-	if (ret) {
-		log_error("Failed to create monitoring thread: %s\n", strerror(ret));
-		goto del_cdq;
+	if (opt_tpt_monitor) {
+		ret = pthread_create(&tpt_state.monitor_thread, NULL,
+				     cdq_tpt_monitor_thread, cdq);
+		if (ret) {
+			log_error("Failed to create monitoring thread: %s\n", strerror(ret));
+			goto del_cdq;
+		}
 	}
 
 	// Run the consumption loop
 	ret = run_stat_cdq(cdq, u_cadence_nbyte, p_cadence_nbyte);
 
 	// Wait for monitor thread to finish
-	pthread_join(tpt_state.monitor_thread, NULL);
+	if (opt_tpt_monitor)
+		pthread_join(tpt_state.monitor_thread, NULL);
 
 del_cdq:
 	ret |= teardown_cdq_kernel(cdq);
@@ -729,10 +745,12 @@ unmap_entries:
 	ret |= munmap(cdq->entries, libvfn_cdq_size(cdq));
 
 close_epoll:
-	close(cdq->epoll_fd);
+	if (opt_tpt_monitor)
+		close(cdq->epoll_fd);
 
 close_eventfd:
-	close(cdq->tft_fd);
+	if (opt_tpt_monitor)
+		close(cdq->tft_fd);
 
 out_err:
 	if (ret)
