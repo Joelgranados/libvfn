@@ -18,8 +18,40 @@
 
 #include <stdio.h>
 #include "ccan/compiler/compiler.h"
+#include "ccan/opt/opt.h"
+#include "ccan/str/str.h"
 
-int main(int argc UNUSED, char **argv UNUSED)
+static char *opt_mmc_bdf = "";
+static char *opt_mc_bdf = "";
+static bool s_usage = false;
+static uint opt_size_entry_nr = 0;
+
+static struct opt_table opts[] = {
+	OPT_WITHOUT_ARG("-h|--help", opt_set_bool, &s_usage, "show usage"),
+	OPT_WITH_ARG("-mmc-bdf", opt_set_charp, opt_show_charp, &opt_mmc_bdf,
+			"Migration Manager Controller B:D:F Id"),
+	OPT_WITH_ARG("--mc-bdf", opt_set_charp, opt_show_charp, &opt_mc_bdf,
+			"Migratable controller B:D:F Id"),
+	OPT_WITH_ARG("--size-entry-nr", opt_set_uintval, opt_show_uintval, &opt_size_entry_nr,
+			"Number of 32 byte migration CDQ entries"),
+};
+
+int main(int argc, char **argv)
 {
+	opt_register_table(opts, NULL);
+	opt_parse(&argc, argv, opt_log_stderr_exit);
+
+	if (s_usage)
+		opt_usage_and_exit(NULL);
+
+	if (streq(opt_mmc_bdf, ""))
+		opt_usage_exit_fail("missing --mmc-bdf migration manager controller arg");
+	if (streq(opt_mc_bdf, ""))
+		opt_usage_exit_fail("missing --mc-bdf migratable controller arg");
+	if (opt_size_entry_nr == 0)
+		opt_usage_exit_fail("--entry-nr must be > 0");
+
+	opt_free_table();
+
 	fprintf(stderr, "Hello world");
 }
