@@ -95,6 +95,11 @@ endif
 config_host.set('HAVE_IOMMU_FAULT_QUEUE_ALLOC', has_fault_queue,
   description: 'if IOMMU_FAULT_QUEUE_ALLOC is defined in linux/iommufd.h')
 
+config_host.set('HAVE_CDQ_IOCTL',
+  cc.has_header_symbol('linux/nvme_ioctl.h', 'NVME_IOCTL_CDQ',
+    include_directories: linux_headers),
+  description: 'if nvme_cdq_cmd is defined in linux/nvme_ioctl.h')
+
 subdir('internal')
 
 add_project_arguments([
@@ -201,4 +206,5 @@ summary_info += {'Documentation': build_docs}
 summary_info += {'Profiling': get_option('profiling')}
 summary_info += {'iommufd': has_iommufd}
 summary_info += {'iommufd fault queue': has_fault_queue}
+summary_info += {'cdq ioctl': config_host.get('HAVE_CDQ_IOCTL')}
 summary(summary_info, bool_yn: true, section: 'Features')
