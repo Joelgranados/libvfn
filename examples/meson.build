@@ -15,6 +15,7 @@ examples = {
   'perf': ['perf.c'],
   'regs': ['regs.c'],
   'sriov': ['sriov.c'],
+  'write' : ['write.c'],
 }
 
 if config_host.get('HAVE_IOMMU_FAULT_QUEUE_ALLOC', false)
