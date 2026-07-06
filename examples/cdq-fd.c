@@ -44,7 +44,7 @@ static uint opt_zeroread_wait_ml = 0;
 
 static struct opt_table opts[] = {
 	OPT_WITHOUT_ARG("-h|--help", opt_set_bool, &s_usage, "show usage"),
-	OPT_WITH_ARG("-mmc-bdf", opt_set_charp, opt_show_charp, &opt_mmc_bdf,
+	OPT_WITH_ARG("--mmc-bdf", opt_set_charp, opt_show_charp, &opt_mmc_bdf,
 			"Migration Manager Controller B:D:F Id"),
 	OPT_WITH_ARG("--mc-bdf", opt_set_charp, opt_show_charp, &opt_mc_bdf,
 			"Migratable controller B:D:F Id"),
@@ -54,6 +54,7 @@ static struct opt_table opts[] = {
 			"Number of entries to read from the CDQ before exiting"),
 	OPT_WITH_ARG("--zeroread-wait-ml", opt_set_uintval, opt_show_uintval, &opt_zeroread_wait_ml,
 			"millisencods to wait on zero reads. 0 means no tail pointer trigger"),
+	OPT_ENDTABLE,
 };
 
 struct cdq_fd {
