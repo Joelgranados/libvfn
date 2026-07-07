@@ -108,6 +108,7 @@ int cdqfd_create_ioctl_cdq(struct cdq_fd *cdq)
 	struct nvme_cdq_cmd cdq_cmd = {
 		.size_nbyte = cdq->size_nbyte,
 		.mc_id = cdq->mc_id,
+		.tpt_fd = cdq->tpt_fd,
 	};
 
 	ret = ioctl(cdq->mmc_fd, NVME_IOCTL_CDQ, &cdq_cmd);
@@ -124,11 +125,14 @@ int cdqfd_create_ioctl_cdq(struct cdq_fd *cdq)
 int cdqfd_delete_ioctl_cdq(struct cdq_fd *cdq)
 {
 	int ret = 0;
-	struct nvme_cdq_cmd cdq_cmd = { .size_nbyte = 0, };
+	struct nvme_cdq_cmd cdq_cmd = {
+		.mc_id = cdq->mc_id,
+		.size_nbyte = 0,
+	};
 
 	ret = ioctl(cdq->mmc_fd, NVME_IOCTL_CDQ, &cdq_cmd);
 	if (ret) {
-		log_error("ERror on cdq ioctl delete, err : %d\n", errno);
+		log_error("Error on cdq ioctl delete, err : %d\n", errno);
 		return ret;
 	}
 
