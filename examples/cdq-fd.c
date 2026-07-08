@@ -72,7 +72,7 @@ int cdqfd_create_eventfd(struct cdq_fd *cdq)
 		return -EINVAL;
 	}
 
-	cdq->tpt_fd = eventfd(0, EFD_CLOEXEC);
+	cdq->tpt_fd = eventfd(0, EFD_CLOEXEC & EFD_NONBLOCK & EFD_SEMAPHORE);
 	if (cdq->tpt_fd < 0) {
 		log_error("Error on eventfd creation, err : %d\n", errno);
 		return -errno;
@@ -222,12 +222,51 @@ int cdqfd_delete_cdq(struct cdq_fd *cdq)
  */
 int cdqfd_wait_tptfd(struct cdq_fd *cdq, const uint wait_mili)
 {
+	int ret;
+	uint64_t u;
 	struct pollfd pfd = {
 		.fd = cdq->tpt_fd,
-		.events = POLLIN,
+		.events = POLLIN & POLLERR,
 	};
 
-	return poll(&pfd, 1, wait_mili);
+	ret = poll(&pfd, 1, wait_mili);
+	if (ret < 0) {
+		log_error("poll Error: ret %d POLLIN %d, POLLHUP %d, POLLERR %d, errno %d\n",
+			  ret, pfd.revents & POLLIN, pfd.revents & POLLHUP,
+			  pfd.revents & POLLERR, errno);
+		return ret;
+	}
+
+	if (ret == 0) {
+		log_info("No eventfd triggered after waiting for %d\n", cdq->tpt_fd);
+		return ret;
+	}
+
+	ret = read(cdq->tpt_fd, &u, sizeof(uint64_t));
+	if (ret) {
+		log_error("read eventfd failed: ret %d, errno %d\n", ret, errno);
+		return ret > 0 ? -ret: ret;
+	}
+
+	if (u == 0) {
+		log_error("eventfd triggered but the value is 0?????");
+		return -EINVAL;
+	}
+
+	/*
+	 * This is a bit too strong of a condition
+	 * It is possible for the tpt to be set several times
+	 * the eventfd not read (not reset)
+	 * and then when finally the eventfd is read. it contains val > 1
+	 */
+	if (u != 1) {
+		log_error("Eventfd is being armed more than once var : %ld\n", u);
+		return -EINVAL;
+	}
+
+	log_info("Eventfd triggered and returned 1");
+
+	return ret;
 }
 
 int cdqfd_read_cdq(struct cdq_fd *cdq, const uint read_nbytes, const uint zeroread_ml)
