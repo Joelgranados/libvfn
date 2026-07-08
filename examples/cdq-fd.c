@@ -39,6 +39,7 @@ static bool s_usage = false;
 static uint opt_size_entry_nr = 0;
 static uint opt_read_entry_nr = 0;
 static uint opt_zeroread_wait_ml = 0;
+static uint opt_zeroread_retries = 3;
 
 #define MQ_ENTRY_SIZE 32
 
@@ -54,6 +55,8 @@ static struct opt_table opts[] = {
 			"Number of entries to read from the CDQ before exiting"),
 	OPT_WITH_ARG("--zeroread-wait-ml", opt_set_uintval, opt_show_uintval, &opt_zeroread_wait_ml,
 			"millisencods to wait on zero reads. 0 means no tail pointer trigger"),
+	OPT_WITH_ARG("--zeroread-retries", opt_set_uintval, opt_show_uintval, &opt_zeroread_retries,
+			"Number of retries for consecutive zero reads"),
 	OPT_ENDTABLE,
 };
 
@@ -269,13 +272,16 @@ int cdqfd_wait_tptfd(struct cdq_fd *cdq, const uint wait_mili)
 	return ret;
 }
 
-int cdqfd_read_cdq(struct cdq_fd *cdq, const uint read_nbytes, const uint zeroread_ml)
+int cdqfd_read_cdq(struct cdq_fd *cdq, const uint read_nbytes,
+		const uint zeroread_ml, const uint zeroread_retries)
 {
-	int ret = 0;
+	int ret = 0, retries = zeroread_retries;
 	uint read_accum = 0;
 	ssize_t ret_read;
 	__autofree void *buf = NULL;
 
+	log_info("executing %s, %d, loginfo %d, read_nbytes %d\n",
+			__func__, __LINE__, __log_state.v, read_nbytes);
 	buf = zmalloc(cdq->size_nbyte);
 	if (!buf) {
 		log_error("Failed to allocate read buffer err : %d\n", errno);
@@ -283,9 +289,10 @@ int cdqfd_read_cdq(struct cdq_fd *cdq, const uint read_nbytes, const uint zerore
 		goto out;
 	}
 
-	while (read_accum < read_nbytes) {
+	while (read_accum < read_nbytes && retries > 0) {
 
 		ret_read = read(cdq->fd, buf, read_nbytes);
+		log_info("read %ld\n", ret_read);
 		if (ret_read < 0) {
 			log_error("Error on CDQ entry read\n");
 			ret = ret_read;
@@ -296,6 +303,7 @@ int cdqfd_read_cdq(struct cdq_fd *cdq, const uint read_nbytes, const uint zerore
 			read_accum += ret_read;
 			if (logv(LOG_INFO))
 				hexdump(buf, ret_read, "CDQ FD read");
+			continue;
 		}
 
 		/* A tail pointer trigger will be activated in this case */
@@ -305,16 +313,23 @@ int cdqfd_read_cdq(struct cdq_fd *cdq, const uint read_nbytes, const uint zerore
 
 			ret = cdqfd_wait_tptfd(cdq, zeroread_ml);
 			/* Forward the error & forward the timeout as a non-error */
-			if (ret <= 0)
+			log_info("executing %s, %d, cdqfd_wait ret %d\n", __func__, __LINE__, ret);
+			if (ret < 0)
 				goto out;
-			else {
+			else if (ret == 0) {
+				--retries;
+				continue;
+			} else {
 				ret = 0;
+				retries = zeroread_retries;
 				continue;
 			}
 		}
 	}
 
 out:
+
+	log_info("executing %s, %d, function return %d\n", __func__, __LINE__, ret);
 	return ret;
 }
 
@@ -362,7 +377,7 @@ int main(int argc, char **argv)
 	if (ret)
 		goto err_out;
 
-	ret = cdqfd_read_cdq(cdq, read_size_nbyte, opt_zeroread_wait_ml);
+	ret = cdqfd_read_cdq(cdq, read_size_nbyte, opt_zeroread_wait_ml, opt_zeroread_retries);
 	if (ret)
 		goto err_del;
 
