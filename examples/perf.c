@@ -27,6 +27,12 @@
 
 #include "common.h"
 
+enum tx_dir {
+	PERF_LIBVFN_TODEV = 0x0,
+	PERF_LIBVFN_FROMDEV = 0x1
+};
+
+static enum tx_dir tx_dir = PERF_LIBVFN_FROMDEV;
 static char *io_pattern = "read";
 static unsigned long nsid, runtime_in_seconds = 10, warmup_in_seconds, update_stats_interval = 1;
 static int io_depth = 1, io_qsize = -1;
@@ -43,7 +49,8 @@ static struct opt_table opts[] = {
 		     &warmup_in_seconds, "warmup time in seconds"),
 	OPT_WITH_ARG("-u|--update-stats-interval SECONDS", opt_set_ulongval, opt_show_ulongval,
 		     &update_stats_interval, "update stats interval in seconds"),
-	OPT_WITH_ARG("-p|--io-pattern", opt_set_charp, opt_show_charp, &io_pattern, "i/o pattern"),
+	OPT_WITH_ARG("-p|--io-pattern", opt_set_charp, opt_show_charp, &io_pattern,
+		     "i/o pattern: read|randread|write|randwrite"),
 	OPT_WITH_ARG("-q|--io-depth", opt_set_intval, opt_show_intval, &io_depth, "i/o depth"),
 	OPT_WITH_ARG("-n|--io-qsize", opt_set_intval, opt_show_intval, &io_qsize, "i/o queue size"),
 	OPT_ENDTABLE,
@@ -189,7 +196,7 @@ static void run(void)
 
 		iod = calloc(1, sizeof(*iod));
 
-		iod->cmd.rw.opcode = nvme_cmd_read;
+		iod->cmd.rw.opcode = tx_dir == PERF_LIBVFN_TODEV ? nvme_cmd_write : nvme_cmd_read;
 		iod->cmd.rw.nsid = cpu_to_le32(nsid);
 		iod->cmd.rw.dptr.prp1 = cpu_to_le64(iova);
 		iod->cmd.rw.nlb = cpu_to_le16(io_nlb);
@@ -278,7 +285,9 @@ int main(int argc, char **argv)
 		io_pattern = &io_pattern[4];
 	}
 
-	if (!streq(io_pattern, "read"))
+	if (streq(io_pattern, "write"))
+		tx_dir = PERF_LIBVFN_TODEV;
+	else if (!streq(io_pattern, "read"))
 		errx(1, "unsupported i/o pattern");
 
 	if (io_depth < 1)
