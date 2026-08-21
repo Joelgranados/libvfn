@@ -30,6 +30,7 @@
 static char *io_pattern = "read";
 static unsigned long nsid, runtime_in_seconds = 10, warmup_in_seconds, update_stats_interval = 1;
 static int io_depth = 1, io_qsize = -1;
+static uint16_t io_nlb;
 
 static struct opt_table opts[] = {
 	OPT_SUBTABLE(opts_base, NULL),
@@ -190,6 +191,7 @@ static void run(void)
 		iod->cmd.rw.opcode = nvme_cmd_read;
 		iod->cmd.rw.nsid = cpu_to_le32(nsid);
 		iod->cmd.rw.dptr.prp1 = cpu_to_le64(iova);
+		iod->cmd.rw.nlb = cpu_to_le16(io_nlb);
 
 		nvme_rq_prep_cmd(rq, &iod->cmd);
 
@@ -300,6 +302,9 @@ int main(int argc, char **argv)
 	id_ns = (struct nvme_id_ns *)vaddr;
 
 	nsze = le64_to_cpu((__force leint64_t)(id_ns->nsze));
+
+	/* each i/o is one IO_MEM_SIZE-byte buffer. translate to NLB using the NS's LBA size */
+	io_nlb = (uint16_t)((IO_MEM_SIZE >> id_ns->lbaf[id_ns->flbas & 0xf].ds) - 1);
 
 	if (io_qsize < 0)
 		io_qsize = ctrl.config.mqes + 1;
