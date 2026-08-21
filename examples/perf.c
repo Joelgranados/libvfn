@@ -31,6 +31,7 @@ static char *io_pattern = "read";
 static unsigned long nsid, runtime_in_seconds = 10, warmup_in_seconds, update_stats_interval = 1;
 static int io_depth = 1, io_qsize = -1;
 static uint16_t io_nlb;
+#define IO_MEM_SIZE 0x1000
 
 static struct opt_table opts[] = {
 	OPT_SUBTABLE(opts_base, NULL),
@@ -171,11 +172,11 @@ static void run(void)
 
 	stats.tmin = UINT64_MAX;
 
-	mem = mmap(NULL, io_depth * 0x1000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+	mem = mmap(NULL, io_depth * IO_MEM_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
 	if (!mem)
 		err(1, "mmap");
 
-	if (iommu_map_vaddr(__iommu_ctx(&ctrl), mem, io_depth * 0x1000, &iova, 0x0))
+	if (iommu_map_vaddr(__iommu_ctx(&ctrl), mem, io_depth * IO_MEM_SIZE, &iova, 0x0))
 		err(1, "failed to map");
 
 	do {
@@ -195,7 +196,7 @@ static void run(void)
 
 		nvme_rq_prep_cmd(rq, &iod->cmd);
 
-		iova += 0x1000;
+		iova += IO_MEM_SIZE;
 
 		rq->opaque = iod;
 
