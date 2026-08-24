@@ -37,7 +37,8 @@ static char *opt_mmc_bdf = "";
 static char *opt_mc_bdf = "";
 static bool s_usage = false;
 static uint opt_size_entry_nr = 0;
-static uint opt_read_entry_nr = 0;
+static uint opt_read_entry_nr = 1;
+static uint opt_read_buf_nbyte = 0;
 static uint opt_zeroread_wait_ml = 0;
 static uint opt_zeroread_retries = 3;
 
@@ -50,9 +51,13 @@ static struct opt_table opts[] = {
 	OPT_WITH_ARG("--mc-bdf", opt_set_charp, opt_show_charp, &opt_mc_bdf,
 			"Migratable controller B:D:F Id"),
 	OPT_WITH_ARG("--size-entry-nr", opt_set_uintval, opt_show_uintval, &opt_size_entry_nr,
-			"Number of 32 byte migration CDQ entries"),
+			"CDQ size: Number of 32 byte migration CDQ entries"),
 	OPT_WITH_ARG("--read-entry-nr", opt_set_uintval, opt_show_uintval, &opt_read_entry_nr,
-			"Number of entries to read from the CDQ before exiting"),
+			"Number of entries to read from the CDQ before exiting. "
+			"Zero means it is ignored"),
+	OPT_WITH_ARG("--read-buf-nbyte", opt_set_uintval, opt_show_uintval, &opt_read_buf_nbyte,
+			"Size in bytes of the buffer used to read the cdq"
+			"Should be a multiple of MQ entry size (32)"),
 	OPT_WITH_ARG("--zeroread-wait-ml", opt_set_uintval, opt_show_uintval, &opt_zeroread_wait_ml,
 			"millisencods to wait on zero reads. 0 means no tail pointer trigger"),
 	OPT_WITH_ARG("--zeroread-retries", opt_set_uintval, opt_show_uintval, &opt_zeroread_retries,
@@ -272,29 +277,33 @@ int cdqfd_wait_tptfd(struct cdq_fd *cdq, const uint wait_mili)
 	return ret;
 }
 
-int cdqfd_read_cdq(struct cdq_fd *cdq, const uint read_nbytes,
-		const uint zeroread_ml, const uint zeroread_retries)
+int cdqfd_read_cdq(struct cdq_fd *cdq, const uint nbytes_toread, const uint read_buf_nbytes,
+		   const uint zeroread_ml, const uint zeroread_retries)
 {
+	bool bound_read = nbytes_toread > 0;
 	int ret = 0, retries = zeroread_retries;
 	uint read_accum = 0;
 	ssize_t ret_read;
 	__autofree void *buf = NULL;
 
-	log_info("executing %s, %d, loginfo %d, read_nbytes %d\n",
-			__func__, __LINE__, __log_state.v, read_nbytes);
-	buf = zmalloc(cdq->size_nbyte);
+	log_info("executing %s, %d, loginfo %d, read_buf_nbytes %d\n",
+			__func__, __LINE__, __log_state.v, read_buf_nbytes);
+	buf = zmalloc(read_buf_nbytes);
 	if (!buf) {
 		log_error("Failed to allocate read buffer err : %d\n", errno);
 		ret = -ENOMEM;
 		goto out;
 	}
 
-	while (read_accum < read_nbytes && retries > 0) {
+	while (true) {
+		if (bound_read && read_accum >= nbytes_toread)
+			break;
 
-		ret_read = read(cdq->fd, buf, read_nbytes);
+		ret_read = read(cdq->fd, buf, read_buf_nbytes);
 		log_info("read %ld\n", ret_read);
 		if (ret_read < 0) {
-			log_error("Error on CDQ entry read\n");
+			log_error("Error on CDQ entry read. errno %d, return %ld\n",
+					errno, ret_read);
 			ret = ret_read;
 			goto out;
 		}
@@ -318,6 +327,8 @@ int cdqfd_read_cdq(struct cdq_fd *cdq, const uint read_nbytes,
 				goto out;
 			else if (ret == 0) {
 				--retries;
+				if (retries <= 0)
+					break;
 				continue;
 			} else {
 				ret = 0;
@@ -350,8 +361,10 @@ int main(int argc, char **argv)
 		opt_usage_exit_fail("missing --mc-bdf migratable controller arg");
 	if (opt_size_entry_nr == 0)
 		opt_usage_exit_fail("--entry-nr must be > 0");
-	if (opt_read_entry_nr == 0)
-		opt_usage_exit_fail("--read-entry-nr must be > 0");
+	if (opt_read_buf_nbyte == 0)
+		opt_read_buf_nbyte = 32;
+	if (opt_read_buf_nbyte % MQ_ENTRY_SIZE != 0)
+		opt_usage_exit_fail("--read-buf-nbyte should be a multiple of 32");
 
 	size_nbyte = MQ_ENTRY_SIZE * opt_size_entry_nr;
 	if (size_nbyte > UINT32_MAX)
@@ -377,7 +390,8 @@ int main(int argc, char **argv)
 	if (ret)
 		goto err_out;
 
-	ret = cdqfd_read_cdq(cdq, read_size_nbyte, opt_zeroread_wait_ml, opt_zeroread_retries);
+	ret = cdqfd_read_cdq(cdq, read_size_nbyte, opt_read_buf_nbyte, opt_zeroread_wait_ml,
+			     opt_zeroread_retries);
 	if (ret)
 		goto err_del;
 
