@@ -61,7 +61,7 @@ static struct opt_table opts[] = {
 	OPT_WITH_ARG("--zeroread-wait-ml", opt_set_uintval, opt_show_uintval, &opt_zeroread_wait_ml,
 			"millisencods to wait on zero reads. 0 means no tail pointer trigger"),
 	OPT_WITH_ARG("--zeroread-retries", opt_set_uintval, opt_show_uintval, &opt_zeroread_retries,
-			"Number of retries for consecutive zero reads"),
+			"Number of retries for consecutive zero reads. 0 means infinite."),
 	OPT_ENDTABLE,
 };
 
@@ -325,14 +325,16 @@ int cdqfd_read_cdq(struct cdq_fd *cdq, const uint nbytes_toread, const uint read
 			log_info("executing %s, %d, cdqfd_wait ret %d\n", __func__, __LINE__, ret);
 			if (ret < 0)
 				goto out;
-			else if (ret == 0) {
-				if (--retries <= 0)
-					break;
-				continue;
-			} else {
-				ret = 0;
-				retries = zeroread_retries;
-				continue;
+			else if (retries < INT_MAX) {
+				if (ret == 0) {
+					if (--retries <= 0)
+						break;
+					continue;
+				} else {
+					ret = 0;
+					retries = zeroread_retries;
+					continue;
+				}
 			}
 		}
 	}
@@ -364,6 +366,8 @@ int main(int argc, char **argv)
 		opt_read_buf_nbyte = 32;
 	if (opt_read_buf_nbyte % MQ_ENTRY_SIZE != 0)
 		opt_usage_exit_fail("--read-buf-nbyte should be a multiple of 32");
+	if (opt_zeroread_retries == 0)
+		opt_zeroread_retries = INT_MAX;
 
 	size_nbyte = MQ_ENTRY_SIZE * opt_size_entry_nr;
 	if (size_nbyte > UINT32_MAX)
