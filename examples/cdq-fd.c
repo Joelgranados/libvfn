@@ -326,8 +326,7 @@ int cdqfd_read_cdq(struct cdq_fd *cdq, const uint nbytes_toread, const uint read
 			if (ret < 0)
 				goto out;
 			else if (ret == 0) {
-				--retries;
-				if (retries <= 0)
+				if (--retries <= 0)
 					break;
 				continue;
 			} else {
