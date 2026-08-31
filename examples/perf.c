@@ -35,6 +35,7 @@ enum tx_dir {
 static enum tx_dir tx_dir = PERF_LIBVFN_FROMDEV;
 static char *io_pattern = "read";
 static unsigned long nsid, runtime_in_seconds = 10, warmup_in_seconds, update_stats_interval = 1;
+static unsigned long target_iops = 0;
 static int io_depth = 1, io_qsize = -1;
 static uint16_t io_nlb;
 #define IO_MEM_SIZE 0x1000
@@ -53,6 +54,8 @@ static struct opt_table opts[] = {
 		     "i/o pattern: read|randread|write|randwrite"),
 	OPT_WITH_ARG("-q|--io-depth", opt_set_intval, opt_show_intval, &io_depth, "i/o depth"),
 	OPT_WITH_ARG("-n|--io-qsize", opt_set_intval, opt_show_intval, &io_qsize, "i/o queue size"),
+	OPT_WITH_ARG("-r|--iops", opt_set_ulongval, opt_show_ulongval, &target_iops,
+		     "target iops, 0 = unlimited (default 0)"),
 	OPT_ENDTABLE,
 };
 
@@ -74,7 +77,45 @@ static struct {
 struct iod {
 	uint64_t tsubmit;
 	union nvme_cmd cmd;
+
+	struct nvme_rq *rq;	/* back-pointer, needed when reissuing out of 'pending' */
+	struct iod *next;	/* linkage while queued on 'pending' */
 };
+
+/* fifo of iods that are ready to (re)issue but held back by --iops pacing */
+static struct iod *pending_head, *pending_tail;
+static unsigned int npending;
+
+static uint64_t rate_start_tick;
+static uint64_t rate_issued;
+
+static void pending_push(struct iod *iod)
+{
+	iod->next = NULL;
+
+	if (pending_tail)
+		pending_tail->next = iod;
+	else
+		pending_head = iod;
+
+	pending_tail = iod;
+	npending++;
+}
+
+static struct iod *pending_pop(void)
+{
+	struct iod *iod = pending_head;
+
+	if (iod) {
+		pending_head = iod->next;
+		if (!pending_head)
+			pending_tail = NULL;
+
+		npending--;
+	}
+
+	return iod;
+}
 
 static void io_issue(struct nvme_rq *rq)
 {
@@ -94,6 +135,53 @@ static void io_issue(struct nvme_rq *rq)
 	nvme_sq_post(rq->sq, &iod->cmd);
 
 	queued++;
+}
+
+/*
+ * io_submit - make @rq ready to go out, honoring --iops pacing
+ *
+ * When unlimited (the default), this posts immediately, same as calling
+ * io_issue() directly. Otherwise it queues on 'pending' for io_throttle() to
+ * release once the configured rate allows it.
+ */
+static void io_submit(struct nvme_rq *rq)
+{
+	if (!target_iops) {
+		io_issue(rq);
+		return;
+	}
+
+	pending_push(rq->opaque);
+}
+
+/*
+ * io_throttle - release as much of 'pending' as the --iops budget allows
+ *
+ * Rings the doorbell itself if it posts anything. Call this both while
+ * spin-waiting for completions and right after reaping some, so pacing keeps
+ * advancing regardless of completion timing.
+ */
+static void io_throttle(void)
+{
+	uint64_t now, allowed;
+	struct iod *iod;
+	bool posted = false;
+
+	if (!target_iops || !npending)
+		return;
+
+	now = get_ticks();
+	allowed = (now - rate_start_tick) * target_iops / __vfn_ticks_freq;
+
+	while (rate_issued < allowed && (iod = pending_pop()) != NULL) {
+		io_issue(iod->rq);
+
+		rate_issued++;
+		posted = true;
+	}
+
+	if (posted)
+		nvme_sq_update_tail(sq);
 }
 
 static void io_complete(struct nvme_rq *rq)
@@ -118,7 +206,7 @@ static void io_complete(struct nvme_rq *rq)
 		return;
 	}
 
-	io_issue(rq);
+	io_submit(rq);
 }
 
 static void update_and_print_stats(bool warmup)
@@ -129,7 +217,7 @@ static void update_and_print_stats(bool warmup)
 		goto out;
 
 	iops = (float)stats.completed_quantum / update_stats_interval;
-	mbps = iops * 512 / (1024 * 1024);
+	mbps = iops * IO_MEM_SIZE / (1024 * 1024);
 
 	printf("%10s iops %10.2f mbps %10.2f\r", warmup ? "(warmup)" : "", iops, mbps);
 	fflush(stdout);
@@ -179,6 +267,9 @@ static void run(void)
 
 	stats.tmin = UINT64_MAX;
 
+	rate_start_tick = now;
+	rate_issued = 0;
+
 	mem = mmap(NULL, io_depth * IO_MEM_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
 	if (!mem)
 		err(1, "mmap");
@@ -196,6 +287,7 @@ static void run(void)
 
 		iod = calloc(1, sizeof(*iod));
 
+		iod->rq = rq;
 		iod->cmd.rw.opcode = tx_dir == PERF_LIBVFN_TODEV ? nvme_cmd_write : nvme_cmd_read;
 		iod->cmd.rw.nsid = cpu_to_le32(nsid);
 		iod->cmd.rw.dptr.prp1 = cpu_to_le64(iova);
@@ -207,17 +299,23 @@ static void run(void)
 
 		rq->opaque = iod;
 
-		io_issue(rq);
+		io_submit(rq);
 	} while (true && --to_submit > 0);
 
-	nvme_sq_update_tail(sq);
+	if (target_iops)
+		io_throttle();
+	else
+		nvme_sq_update_tail(sq);
 
 	do {
 
 		while (!reap())
-			;
+			io_throttle();
 
-		nvme_sq_update_tail(sq);
+		io_throttle();
+
+		if (!target_iops)
+			nvme_sq_update_tail(sq);
 
 		now = get_ticks();
 
@@ -244,7 +342,7 @@ static void run(void)
 	update_and_print_stats(false);
 
 	iops = (float)stats.completed / runtime_in_seconds;
-	mbps = iops * 512 / (1024 * 1024);
+	mbps = iops * IO_MEM_SIZE / (1024 * 1024);
 	lmin = (float)stats.tmin * 1000 * 1000 / __vfn_ticks_freq;
 	lmax = (float)stats.tmax * 1000 * 1000 / __vfn_ticks_freq;
 	lavg = ((float)stats.ttotal * 1000 * 1000 / __vfn_ticks_freq) / stats.completed;
@@ -253,6 +351,15 @@ static void run(void)
 	printf("%10.2f %10.2f %10.2f %10.2f %10.2f\n", iops, mbps, lavg, lmin, lmax);
 
 	draining = true;
+
+	/* anything still held back by --iops pacing won't be reissued now; give the
+	 * request trackers back so nvme_delete_ioqpair()/cleanup doesn't leak them */
+	{
+		struct iod *iod;
+
+		while ((iod = pending_pop()) != NULL)
+			nvme_rq_release(iod->rq);
+	}
 
 	nvme_sq_update_tail(sq);
 
