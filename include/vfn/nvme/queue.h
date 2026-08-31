@@ -40,8 +40,8 @@ struct nvme_cq {
 	struct iommu_dmabuf mem;
 
 	int id;
-	uint16_t head;
-	int qsize;
+	uint32_t head;
+	uint32_t qsize;
 	size_t entry_size;
 
 	/* memory-mapped register */
@@ -64,8 +64,8 @@ struct nvme_sq {
 	struct iommu_dmabuf mem;
 	struct iommu_dmabuf pages;
 
-	uint16_t tail, ptail;
-	int qsize;
+	uint32_t tail, ptail;
+	uint32_t qsize;
 	int id;
 	size_t entry_size;
 
@@ -105,7 +105,7 @@ static inline bool __nvme_need_mmio(uint16_t eventidx, uint16_t val, uint16_t ol
 	return (uint16_t)(val - eventidx) <= (uint16_t)(val - old);
 }
 
-static inline int nvme_try_dbbuf(uint16_t v, struct nvme_dbbuf *dbbuf)
+static inline int nvme_try_dbbuf(uint32_t v, struct nvme_dbbuf *dbbuf)
 {
 	uint32_t old, eventidx;
 
@@ -123,7 +123,7 @@ static inline int nvme_try_dbbuf(uint16_t v, struct nvme_dbbuf *dbbuf)
 
 	eventidx = __LOAD_PTR(uint32_t *, dbbuf->eventidx);
 
-	if (!__nvme_need_mmio((uint16_t)eventidx, v, (uint16_t)old)) {
+	if (!__nvme_need_mmio((uint16_t)eventidx, (uint16_t)v, (uint16_t)old)) {
 		trace_guard(NVME_SKIP_MMIO) {
 			trace_emit("eventidx %u val %u old %u\n", eventidx, v, old);
 		}
