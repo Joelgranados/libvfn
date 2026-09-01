@@ -320,22 +320,26 @@ int cdqfd_read_cdq(struct cdq_fd *cdq, const uint nbytes_toread, const uint read
 			if (cdq->tpt_fd < 0)
 				break; // no eventfd -> no waiting.
 
+cdqfd_wait:
 			ret = cdqfd_wait_tptfd(cdq, zeroread_ml);
+			log_info("Waiting on TPT: ret %d, retries %d\n", ret, retries);
 			/* Forward the error & forward the timeout as a non-error */
-			log_info("executing %s, %d, cdqfd_wait ret %d\n", __func__, __LINE__, ret);
 			if (ret < 0)
 				goto out;
-			else if (retries < INT_MAX) {
-				if (ret == 0) {
-					if (--retries <= 0)
-						break;
-					continue;
-				} else {
-					ret = 0;
-					retries = zeroread_retries;
-					continue;
-				}
+
+			if (ret > 0) {
+				retries = zeroread_retries;
+				continue;
 			}
+
+			// if ret == 0
+			if (retries == INT_MAX)
+				goto cdqfd_wait; //re-try for ever
+
+			if(--retries <= 0)
+				break;
+			else
+				goto cdqfd_wait;
 		}
 	}
 
