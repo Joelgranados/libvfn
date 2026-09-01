@@ -251,9 +251,9 @@ int cdqfd_wait_tptfd(struct cdq_fd *cdq, const uint wait_mili)
 	}
 
 	ret = read(cdq->tpt_fd, &u, sizeof(uint64_t));
-	if (ret) {
+	if (ret < 0) {
 		log_error("read eventfd failed: ret %d, errno %d\n", ret, errno);
-		return ret > 0 ? -ret: ret;
+		return ret;
 	}
 
 	if (u == 0) {
