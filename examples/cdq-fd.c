@@ -80,7 +80,7 @@ int cdqfd_create_eventfd(struct cdq_fd *cdq)
 		return -EINVAL;
 	}
 
-	cdq->tpt_fd = eventfd(0, EFD_CLOEXEC & EFD_NONBLOCK & EFD_SEMAPHORE);
+	cdq->tpt_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE);
 	if (cdq->tpt_fd < 0) {
 		log_error("Error on eventfd creation, err : %d\n", errno);
 		return -errno;
@@ -234,7 +234,7 @@ int cdqfd_wait_tptfd(struct cdq_fd *cdq, const uint wait_mili)
 	uint64_t u;
 	struct pollfd pfd = {
 		.fd = cdq->tpt_fd,
-		.events = POLLIN & POLLERR,
+		.events = POLLIN | POLLERR,
 	};
 
 	ret = poll(&pfd, 1, wait_mili);
