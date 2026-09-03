@@ -272,7 +272,7 @@ int cdqfd_wait_tptfd(struct cdq_fd *cdq, const uint wait_mili)
 		return -EINVAL;
 	}
 
-	log_info("Eventfd triggered and returned 1");
+	log_info("Eventfd triggered ret %d, u %ld\n", ret , u);
 
 	return ret;
 }
@@ -345,7 +345,7 @@ cdqfd_wait:
 
 out:
 
-	log_info("executing %s, %d, function return %d\n", __func__, __LINE__, ret);
+	log_info("Finished reading cdq readAccum %d\n", read_accum);
 	return ret;
 }
 
